@@ -1,0 +1,81 @@
+---
+import type { ImageMetadata } from "astro";
+type Props = {
+	/** The title of the page, used in `<title>` and Open Graph metadata. */
+	title: string;
+
+	/** The description of the page, used in `<meta name="description">` and Open Graph metadata. */
+	description: string;
+
+	/** The path to the favicon image. Defaults to /favicon.svg */
+	faviconPath?: string;
+
+	/** Optional configuration for the mask icon. */
+	maskIcon?: {
+		/** The path to the mask icon SVG file (e.g., `/path/to/icon.svg`). */
+		path: string;
+
+		/** A valid CSS color to apply to the mask icon. */
+		color: string;
+	};
+
+	/** A valid CSS color for the browser theme. */
+	themeColor?: string;
+
+	/** The site name, used in `og:site_name` metadata for some embeds. */
+	site_name?: string;
+
+	/** Alternate text for the Open Graph image. Use if the image contains meaningful text. */
+	ogImageAlt?: string;
+
+	/** The style for the Twitter card, also used by platforms like Discord. Defaults to summary_large_image */
+	twitterCardStyle?: "summary" | "summary_large_image" | "app" | "player";
+} & (
+	| {
+			/**
+			 * The file path to the Open Graph image in public.
+			 * Example: `/og-image.jpg`.
+			 */
+			ogImagePublicPath: string;
+			ogImage?: never;
+	  }
+	| {
+			/**
+			 * The already imported image object containing metadata such as `src` and `width`.
+			 */
+			ogImage: ImageMetadata;
+			ogImagePublicPath?: never;
+	  }
+);
+
+const {
+	title,
+	description,
+	site_name,
+	ogImageAlt,
+	ogImagePublicPath,
+	ogImage,
+	// twitterCardStyle = "summary_large_image",
+	themeColor,
+	maskIcon,
+	faviconPath = "/favicon.svg",
+} = Astro.props;
+// const canonicalURL = new URL(Astro.url.pathname, Astro.site);
+---
+
+<link rel="icon" type="image/svg+xml" href={faviconPath} />
+{maskIcon && <link rel="mask-icon" href={maskIcon.path} color={maskIcon.color} />}
+<meta name="description" content={description} />
+{themeColor && <meta name="theme-color" content={themeColor} />}
+{/* <link rel="canonical" href={canonicalURL} />*/}
+<meta property="og:type" content="website" />
+<meta property="og:title" content={title} />
+<meta property="og:locale" content="en_US" />
+<meta property="og:description" content={description} />
+{site_name && <meta property="og:site_name" content={site_name} />}
+{/* <meta property="og:url" content={canonicalURL} /> */}
+{ogImageAlt && <meta property="og:image:alt" content={ogImageAlt} />}
+{ogImagePublicPath && <meta property="og:image" content={ogImagePublicPath} />}
+{ogImage && <meta property="og:image" content={ogImage.src} />}
+{/* <meta name="twitter:card" content={twitterCardStyle} /> */}
+<title>{title}</title>

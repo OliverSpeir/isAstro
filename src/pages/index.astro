@@ -1,0 +1,110 @@
+---
+export const prerender = false;
+import Layout from "@layouts/DefaultPage.astro";
+import { isAstroWebsite, isValidUrl } from "@lib/modules/server";
+let title = "isAstro";
+let description = "Check if a website is built with Astro";
+let result = null;
+const url = new URL(Astro.request.url);
+const urlParam = url.searchParams.get("url");
+
+if (Astro.request.method === "POST") {
+	const formData = await Astro.request.formData();
+	const urlValue = formData.get("url");
+	if (typeof urlValue === "string") {
+		return Astro.redirect(`?url=${encodeURIComponent(urlValue.trim())}`);
+	}
+} else if (urlParam) {
+	const decodedUrl = decodeURIComponent(urlParam).trim();
+	if (!isValidUrl(decodedUrl)) {
+		result = { isAstro: false, mechanism: "Invalid URL", url: decodedUrl };
+	} else {
+		try {
+			result = await isAstroWebsite(decodedUrl);
+		} catch (_error) {
+			result = {
+				isAstro: false,
+				mechanism: "Invalid URL: Unable to check website",
+				url: decodedUrl,
+			};
+		}
+	}
+}
+
+if (result) {
+	title = `is ${result.url} Astro? ${result.isAstro ? "Probably" : "Probably not"}`;
+	description = `${result.mechanism} ${
+		result.astroVersion ? `Astro Version: ${result.astroVersion}` : ""
+	} ${result.starlightVersion ? `Starlight Version: ${result.starlightVersion}` : ""}`;
+}
+---
+
+<Layout {title} {description}>
+	<main>
+		<h1>isAstro</h1>
+		{
+			result && (
+				<div>
+					<span>{result.isAstro ? "✅" : "❌"}</span>
+					<p>
+						{result.mechanism} in <a href={result.url}>{result.url}</a>
+					</p>
+					{result.astroVersion && <p>Astro Version: {result.astroVersion}</p>}
+					{result.starlightVersion && <p>Starlight Version: {result.starlightVersion}</p>}
+				</div>
+			)
+		}
+		<form method="POST">
+			<input type="url" name="url" placeholder="https://website.com" required value="" />
+			<button type="submit">Check Website</button>
+		</form>
+	</main>
+</Layout>
+<style>
+	:root {
+		color-scheme: light dark;
+	}
+	main {
+		max-width: 400px;
+		margin: 2rem auto;
+		padding: 1rem;
+	}
+	div {
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		border: 1px solid;
+		text-align: center;
+		padding: 20px;
+		gap: 15px;
+		margin-bottom: 20px;
+		border-radius: 2px;
+	}
+	span {
+		font-size: 2rem;
+	}
+	p {
+		margin: 0;
+	}
+	a {
+		word-wrap: break-word;
+	}
+	form {
+		display: grid;
+		gap: 20px;
+		font-size: 1.0625rem;
+	}
+	input {
+		padding: 7px;
+	}
+	button {
+		width: 100%;
+		padding: 8px;
+		cursor: pointer;
+	}
+	@media (prefers-color-scheme: dark) {
+		input::placeholder {
+			color: #aaaaaa;
+		}
+	}
+</style>
