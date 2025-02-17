@@ -123,7 +123,7 @@ export async function isAstroWebsite(
 				);
 			}
 
-			if (chunkCount === 1 && isBotChallenge(chunk)) {
+			if (chunkCount < 3   && isBotChallenge(chunk)) {
 				debugLog("[isAstroWebsite] Detected bot challenge page");
 				await reader.cancel();
 				return {
