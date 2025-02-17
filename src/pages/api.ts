@@ -1,6 +1,6 @@
 export const prerender = false;
 import type { APIRoute } from "astro";
-import { isAstroWebsite, isValidUrl } from "@lib/modules/server";
+import { isAstroWebsite, isValidUrl, addProtocolToUrlAndTrim } from "@lib/modules/server";
 
 export const GET: APIRoute = async ({ url }) => {
 	const urlParam = url.searchParams.get("url");
@@ -19,7 +19,7 @@ export const GET: APIRoute = async ({ url }) => {
 		);
 	}
 
-	const decodedUrl = decodeURIComponent(urlParam).trim();
+	const decodedUrl = decodeURIComponent(addProtocolToUrlAndTrim(urlParam));
 
 	if (!isValidUrl(decodedUrl)) {
 		return new Response(

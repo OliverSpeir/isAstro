@@ -1,5 +1,5 @@
-import { parseGeneratorTags, getAstroMarkers, checkMetaRefresh, isValidUrl } from "./utils";
-export { isValidUrl };
+import { parseGeneratorTags, getAstroMarkers, checkMetaRefresh, isValidUrl, addProtocolToUrlAndTrim } from "./utils";
+export { isValidUrl, addProtocolToUrlAndTrim };
 
 export async function isAstroWebsite(
 	url: string | URL,

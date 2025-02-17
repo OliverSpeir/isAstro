@@ -1,12 +1,13 @@
 ---
 export const prerender = false;
 import Layout from "@layouts/DefaultPage.astro";
-import { isAstroWebsite, isValidUrl } from "@lib/modules/server";
+import { isAstroWebsite, isValidUrl, addProtocolToUrlAndTrim } from "@lib/modules/server";
 let title = "isAstro";
 let description = "Check if a website is built with Astro";
 let result = null;
 let checkingError = null;
 const urlParam = Astro.url.searchParams.get("url");
+
 
 if (Astro.request.method === "POST") {
 	const formData = await Astro.request.formData();
@@ -17,7 +18,7 @@ if (Astro.request.method === "POST") {
 }
 
 if (urlParam) {
-	const decodedUrl = decodeURIComponent(urlParam).trim();
+	const decodedUrl = decodeURIComponent(addProtocolToUrlAndTrim(urlParam));
 	if (!isValidUrl(decodedUrl)) {
 		checkingError = true;
 		result = { isAstro: false, mechanism: "Invalid URL", url: decodedUrl };
@@ -35,7 +36,8 @@ if (urlParam) {
 }
 
 if (result) {
-	title = `is ${result.url} Astro? ${result.isAstro ? "Probably" : "Probably not"}`;
+	const displayUrl = result.url.replace(/^https?:\/\//, "");
+	title = `is ${displayUrl} Astro? ${result.isAstro ? "Probably" : "Probably not"}`;
 	description = `${result.mechanism} ${
 		result.astroVersion ? `Astro Version: ${result.astroVersion}` : ""
 	} ${result.starlightVersion ? `Starlight Version: ${result.starlightVersion}` : ""}`;
@@ -63,7 +65,7 @@ if (result) {
 				</div>
 			)
 		}
-		<form method="POST">
+		<form method="POST" novalidate>
 			<input type="url" name="url" placeholder="https://website.com" required value="" />
 			<button type="submit">Check Website</button>
 		</form>
