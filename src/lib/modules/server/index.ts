@@ -109,6 +109,7 @@ export async function isAstroWebsite(
 			debugLog(
 				`[isAstroWebsite] Reading chunk #${String(chunkCount)}, size=${String(value.length)}`,
 			);
+			console.log(chunk);
 
 			const redirectUrl = checkMetaRefresh(chunk, metaRefreshRegex, response.url, debugLog);
 			if (redirectUrl && currentRedirect < maxRedirects) {
