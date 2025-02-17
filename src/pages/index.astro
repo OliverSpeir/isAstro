@@ -23,7 +23,7 @@ if (urlParam) {
 		result = { isAstro: false, mechanism: "Invalid URL", url: decodedUrl };
 	} else
 		try {
-			result = await isAstroWebsite(decodedUrl);
+			result = await isAstroWebsite(decodedUrl, true);
 		} catch (_) {
 			checkingError = true;
 			result = {
