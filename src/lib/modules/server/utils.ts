@@ -36,9 +36,10 @@ export function parseGeneratorTags(
 /** Checks for various Astro-related markers in an HTML fragment. */
 export function getAstroMarkers(
 	fragment: string,
-	astroCidRegex: RegExp,
+	astroDataAttr: RegExp,
 	astroClassRegex: RegExp,
 	astroAssetRegex: RegExp,
+	astroIslandRegex: RegExp,
 	styleWhereRegex: RegExp,
 	styleAttrRegex: RegExp,
 	debugLog: (...args: unknown[]) => void,
@@ -46,13 +47,13 @@ export function getAstroMarkers(
 ) {
 	const markers: string[] = [];
 
-	if (astroCidRegex.test(fragment)) {
-		debugLog(`[${phaseLabel}] Found "data-astro-cid-" in: "${fragment.slice(0, 200)}"`);
-		markers.push("data-astro-cid attribute");
+	if (astroDataAttr.test(fragment)) {
+		debugLog(`[${phaseLabel}] Found "data-astro-" in: "${fragment.slice(0, 200)}"`);
+		markers.push("data-astro- attribute");
 	}
 	if (astroClassRegex.test(fragment)) {
-		debugLog(`[${phaseLabel}] Found "astro-cid in class" in: "${fragment.slice(0, 200)}"`);
-		markers.push("astro-cid- class");
+		debugLog(`[${phaseLabel}] Found "astro- in class" in: "${fragment.slice(0, 200)}"`);
+		markers.push("astro- class");
 	}
 	if (astroAssetRegex.test(fragment)) {
 		debugLog(`[${phaseLabel}] Found "_astro/ asset reference" in: "${fragment.slice(0, 200)}"`);
@@ -63,8 +64,75 @@ export function getAstroMarkers(
 		markers.push(":where(.astro-...) usage");
 	}
 	if (styleAttrRegex.test(fragment)) {
-		debugLog(`[${phaseLabel}] Found "[data-astro-cid-...]" in: "${fragment.slice(0, 200)}"`);
-		markers.push("data-astro-cid- usage");
+		debugLog(`[${phaseLabel}] Found "[data-astro-...]" in: "${fragment.slice(0, 200)}"`);
+		markers.push("data-astro- css usage");
+	}
+	if (astroIslandRegex.test(fragment)) {
+		debugLog(`[${phaseLabel}] Found "astro-island" in: "${fragment.slice(0, 200)}"`);
+		markers.push("astro-island css usage");
+	}
+
+	return markers;
+}
+
+/** Checks for various Astro-related markers in an HTML fragment. */
+export function getAstroHeadMarkers(
+	fragment: string,
+	astroDataAttr: RegExp,
+	astroAssetRegex: RegExp,
+	styleWhereRegex: RegExp,
+	styleAttrRegex: RegExp,
+	debugLog: (...args: unknown[]) => void,
+	phaseLabel: string,
+) {
+	const markers: string[] = [];
+
+	if (astroDataAttr.test(fragment)) {
+		debugLog(`[${phaseLabel}] Found "data-astro- " in: "${fragment.slice(0, 200)}"`);
+		markers.push("data-astro- attribute");
+	}
+	if (astroAssetRegex.test(fragment)) {
+		debugLog(`[${phaseLabel}] Found "_astro/ asset reference" in: "${fragment.slice(0, 200)}"`);
+		markers.push("_astro/ asset reference");
+	}
+	if (styleWhereRegex.test(fragment)) {
+		debugLog(`[${phaseLabel}] Found ":where(.astro-...)" in: "${fragment.slice(0, 200)}"`);
+		markers.push(":where(.astro-...) usage");
+	}
+	if (styleAttrRegex.test(fragment)) {
+		debugLog(`[${phaseLabel}] Found "[data-astro-...]" in: "${fragment.slice(0, 200)}"`);
+		markers.push("data-astro- css usage");
+	}
+
+	return markers;
+}
+
+export function getAstroBodyMarkers(
+	fragment: string,
+	astroDataAttr: RegExp,
+	astroClassRegex: RegExp,
+	astroAssetRegex: RegExp,
+	astroIslandRegex: RegExp,
+	debugLog: (...args: unknown[]) => void,
+	phaseLabel: string,
+) {
+	const markers: string[] = [];
+
+	if (astroDataAttr.test(fragment)) {
+		debugLog(`[${phaseLabel}] Found "data-astro-" in: "${fragment.slice(0, 200)}"`);
+		markers.push("data-astro- attribute");
+	}
+	if (astroClassRegex.test(fragment)) {
+		debugLog(`[${phaseLabel}] Found "astro- in class" in: "${fragment.slice(0, 200)}"`);
+		markers.push("astro- class");
+	}
+	if (astroAssetRegex.test(fragment)) {
+		debugLog(`[${phaseLabel}] Found "_astro/ asset reference" in: "${fragment.slice(0, 200)}"`);
+		markers.push("_astro/ asset reference");
+	}
+	if (astroIslandRegex.test(fragment)) {
+		debugLog(`[${phaseLabel}] Found "astro-island" in: "${fragment.slice(0, 200)}"`);
+		markers.push("astro-island css usage");
 	}
 
 	return markers;
@@ -77,10 +145,8 @@ export function checkMetaRefresh(
 	baseUrl: string,
 	debugLog: (...args: unknown[]) => void,
 ) {
-	// console.log(fragment)
 	const match = metaRefreshRegex.exec(fragment);
 	if (match?.[1]) {
-		console.log(match[1])
 		const rawRedirectPath = match[1].trim();
 		debugLog(`[checkMetaRefresh] Found meta refresh to: ${rawRedirectPath}`);
 		return new URL(rawRedirectPath, baseUrl).toString();

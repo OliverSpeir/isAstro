@@ -1,5 +1,7 @@
 import {
 	parseGeneratorTags,
+	getAstroHeadMarkers,
+	getAstroBodyMarkers,
 	getAstroMarkers,
 	checkMetaRefresh,
 	isValidUrl,
@@ -38,13 +40,14 @@ export async function isAstroWebsite(
 	const metaGeneratorRegex = /<meta[^>]*\bgenerator\b[^>]*content\s*=\s*["']([^"']+)["']/gi;
 	const metaRefreshRegex =
 		/<meta[^>]+http-equiv\s*=\s*["']refresh["'][^>]+content\s*=\s*["']\s*\d+\s*;\s*url\s*=\s*([^"']+)["']/i;
-	const astroCidRegex = /data-astro-cid-/i;
-	const astroClassRegex = /class\s*=\s*["'][^"']*astro-cid-/i;
+	const astroDataAttrRegex = /data-astro-[a-zA-Z0-9-]+/i;
+	const astroIslandRegex = /<astro-island\b/i;
+	const astroClassRegex = /class\s*=\s*["'][^"']*astro-/i;
 	const astroAssetRegex =
 		/<(script|link|img|picture|meta[^>]*property\s*=\s*["']og:image["'])[^>]*_astro\//i;
 	const endOfHeadRegex = /<\/head>/i;
 	const styleWhereRegex = /:where\s*\(\.astro-[\w-]+\)/i;
-	const styleAttrRegex = /\[data-astro-cid-[^\]]*\]/i;
+	const styleAttrRegex = /\[data-astro-[^\]]*\]/i;
 
 	const astroVersionRef: { value?: string } = {};
 	const starlightVersionRef: { value?: string } = {};
@@ -160,10 +163,9 @@ export async function isAstroWebsite(
 					}
 				}
 
-				const headMarkers = getAstroMarkers(
+				const headMarkers = getAstroHeadMarkers(
 					headHtml,
-					astroCidRegex,
-					astroClassRegex,
+					astroDataAttrRegex,
 					astroAssetRegex,
 					styleWhereRegex,
 					styleAttrRegex,
@@ -195,13 +197,12 @@ export async function isAstroWebsite(
 			} else {
 				bodyHtml += chunk;
 
-				const bodyMarkers = getAstroMarkers(
+				const bodyMarkers = getAstroBodyMarkers(
 					bodyHtml,
-					astroCidRegex,
+					astroDataAttrRegex,
 					astroClassRegex,
 					astroAssetRegex,
-					styleWhereRegex,
-					styleAttrRegex,
+					astroIslandRegex,
 					debugLog,
 					"BODY_PROGRESSIVE",
 				);
@@ -262,9 +263,10 @@ export async function isAstroWebsite(
 
 			const headMarkers = getAstroMarkers(
 				headHtml,
-				astroCidRegex,
+				astroDataAttrRegex,
 				astroClassRegex,
 				astroAssetRegex,
+				astroIslandRegex,
 				styleWhereRegex,
 				styleAttrRegex,
 				debugLog,
