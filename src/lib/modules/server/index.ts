@@ -1,4 +1,11 @@
-import { parseGeneratorTags, getAstroMarkers, checkMetaRefresh, isValidUrl, addProtocolToUrlAndTrim } from "./utils";
+import {
+	parseGeneratorTags,
+	getAstroMarkers,
+	checkMetaRefresh,
+	isValidUrl,
+	addProtocolToUrlAndTrim,
+	isCloudflareChallenge,
+} from "./utils";
 export { isValidUrl, addProtocolToUrlAndTrim };
 
 export async function isAstroWebsite(
@@ -30,7 +37,7 @@ export async function isAstroWebsite(
 
 	const metaGeneratorRegex = /<meta[^>]*\bgenerator\b[^>]*content\s*=\s*["']([^"']+)["']/gi;
 	const metaRefreshRegex =
-		/<meta[^>]+http-equiv\s*=\s*["']refresh["'][^>]+content\s*=\s*["']\s*0\s*;\s*url\s*=\s*([^"']+)["']/i;
+		/<meta[^>]+http-equiv\s*=\s*["']refresh["'][^>]+content\s*=\s*["']\s*\d+\s*;\s*url\s*=\s*([^"']+)["']/i;
 	const astroCidRegex = /data-astro-cid-/i;
 	const astroClassRegex = /class\s*=\s*["'][^"']*astro-cid-/i;
 	const astroAssetRegex =
@@ -111,6 +118,17 @@ export async function isAstroWebsite(
 					maxRedirects,
 					originalUrl,
 				);
+			}
+
+			if (chunkCount === 1 && isCloudflareChallenge(chunk)) {
+				debugLog("[isAstroWebsite] Detected Cloudflare challenge page");
+				await reader.cancel();
+				return {
+					url: originalUrl,
+					lastFetchedUrl: response.url,
+					isAstro: false,
+					mechanism: "Bot challenge detected",
+				};
 			}
 
 			if (readingHead) {
@@ -194,8 +212,7 @@ export async function isAstroWebsite(
 						url: originalUrl,
 						lastFetchedUrl: response.url,
 						isAstro: true,
-						mechanism: `Found ${new Intl.ListFormat('en').format(bodyMarkers)}`,
-						
+						mechanism: `Found ${new Intl.ListFormat("en").format(bodyMarkers)}`,
 					};
 				}
 			}
@@ -259,7 +276,7 @@ export async function isAstroWebsite(
 					url: originalUrl,
 					lastFetchedUrl: response.url,
 					isAstro: true,
-					mechanism: `Found ${new Intl.ListFormat('en').format(headMarkers)}`,
+					mechanism: `Found ${new Intl.ListFormat("en").format(headMarkers)}`,
 				};
 			}
 

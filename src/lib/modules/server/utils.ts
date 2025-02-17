@@ -77,8 +77,10 @@ export function checkMetaRefresh(
 	baseUrl: string,
 	debugLog: (...args: unknown[]) => void,
 ) {
+	// console.log(fragment)
 	const match = metaRefreshRegex.exec(fragment);
 	if (match?.[1]) {
+		console.log(match[1])
 		const rawRedirectPath = match[1].trim();
 		debugLog(`[checkMetaRefresh] Found meta refresh to: ${rawRedirectPath}`);
 		return new URL(rawRedirectPath, baseUrl).toString();
@@ -105,4 +107,15 @@ export function addProtocolToUrlAndTrim(url: string) {
 		formattedUrl = `https://${formattedUrl}`;
 	}
 	return formattedUrl;
+}
+
+export function isCloudflareChallenge(html: string): boolean {
+	const cfIndicators = [
+		/<title>Just a moment\.\.\.<\/title>/i,
+		/cdn-cgi\/challenge-platform/i,
+		/_cf_chl_opt/i,
+		/cf-spinner/i,
+	];
+
+	return cfIndicators.some((indicator) => indicator.test(html));
 }
