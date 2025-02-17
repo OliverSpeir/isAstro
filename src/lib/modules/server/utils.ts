@@ -175,13 +175,17 @@ export function addProtocolToUrlAndTrim(url: string) {
 	return formattedUrl;
 }
 
-export function isCloudflareChallenge(html: string): boolean {
-	const cfIndicators = [
+export function isBotChallenge(html: string): boolean {
+	const indicators = [
 		/<title>Just a moment\.\.\.<\/title>/i,
 		/cdn-cgi\/challenge-platform/i,
 		/_cf_chl_opt/i,
 		/cf-spinner/i,
+		/\.well-known\/sgcaptcha/i,
+		/<meta[^>]+refresh[^>]+sgcaptcha/i,
+		/<meta[^>]+refresh[^>]+challenge/i,
+		/<meta[^>]+refresh[^>]+verify/i,
 	];
 
-	return cfIndicators.some((indicator) => indicator.test(html));
+	return indicators.some((indicator) => indicator.test(html));
 }

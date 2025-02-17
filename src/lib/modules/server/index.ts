@@ -6,7 +6,7 @@ import {
 	checkMetaRefresh,
 	isValidUrl,
 	addProtocolToUrlAndTrim,
-	isCloudflareChallenge,
+	isBotChallenge,
 } from "./utils";
 export { isValidUrl, addProtocolToUrlAndTrim };
 
@@ -123,8 +123,8 @@ export async function isAstroWebsite(
 				);
 			}
 
-			if (chunkCount === 1 && isCloudflareChallenge(chunk)) {
-				debugLog("[isAstroWebsite] Detected Cloudflare challenge page");
+			if (chunkCount === 1 && isBotChallenge(chunk)) {
+				debugLog("[isAstroWebsite] Detected bot challenge page");
 				await reader.cancel();
 				return {
 					url: originalUrl,
