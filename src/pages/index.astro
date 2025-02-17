@@ -5,8 +5,8 @@ import { isAstroWebsite, isValidUrl } from "@lib/modules/server";
 let title = "isAstro";
 let description = "Check if a website is built with Astro";
 let result = null;
-const url = new URL(Astro.request.url);
-const urlParam = url.searchParams.get("url");
+let checkingError = null;
+const urlParam = Astro.url.searchParams.get("url");
 
 if (Astro.request.method === "POST") {
 	const formData = await Astro.request.formData();
@@ -14,21 +14,24 @@ if (Astro.request.method === "POST") {
 	if (typeof urlValue === "string") {
 		return Astro.redirect(`?url=${encodeURIComponent(urlValue.trim())}`);
 	}
-} else if (urlParam) {
+}
+
+if (urlParam) {
 	const decodedUrl = decodeURIComponent(urlParam).trim();
 	if (!isValidUrl(decodedUrl)) {
+		checkingError = true;
 		result = { isAstro: false, mechanism: "Invalid URL", url: decodedUrl };
-	} else {
+	} else
 		try {
 			result = await isAstroWebsite(decodedUrl);
-		} catch (_error) {
+		} catch (_) {
+			checkingError = true;
 			result = {
 				isAstro: false,
-				mechanism: "Invalid URL: Unable to check website",
+				mechanism: "Unable to check",
 				url: decodedUrl,
 			};
 		}
-	}
 }
 
 if (result) {
@@ -46,9 +49,15 @@ if (result) {
 			result && (
 				<div>
 					<span>{result.isAstro ? "✅" : "❌"}</span>
-					<p>
-						{result.mechanism} in <a href={result.url}>{result.url}</a>
-					</p>
+					{checkingError ? (
+						<p>
+							{result.mechanism} <a href={result.url}>{result.url}</a>
+						</p>
+					) : (
+						<p>
+							{result.mechanism} in <a href={result.url}>{result.url}</a>
+						</p>
+					)}
 					{result.astroVersion && <p>Astro Version: {result.astroVersion}</p>}
 					{result.starlightVersion && <p>Starlight Version: {result.starlightVersion}</p>}
 				</div>

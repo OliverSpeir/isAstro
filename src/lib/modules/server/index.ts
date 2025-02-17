@@ -23,7 +23,6 @@ export async function isAstroWebsite(
 	let totalBytes = 0;
 
 	debugLog(`[isAstroWebsite] Starting check for: ${url}`);
-
 	const timeoutMs = 2000;
 	const controller = new AbortController();
 	const { signal } = controller;
@@ -59,7 +58,6 @@ export async function isAstroWebsite(
 				"Accept-Language": "en-US,en;q=0.5",
 			},
 		});
-
 		clearTimeout(timeoutId);
 
 		const contentType = response.headers.get("content-type");
@@ -91,7 +89,7 @@ export async function isAstroWebsite(
 		while (true) {
 			const { done, value } = await reader.read();
 			if (done) {
-				debugLog("[isAstroWebsite] No more data to read.");
+				debugLog("[isAstroWebsite] reader done");
 				break;
 			}
 
@@ -163,9 +161,7 @@ export async function isAstroWebsite(
 					headHtml = headHtml.slice(0, indexEnd);
 
 					if (headMarkers.length > 0) {
-						debugLog(
-							`[isAstroWebsite] Astro markers found in head so far: ${headMarkers.join(", ")}`,
-						);
+						debugLog(`[isAstroWebsite] Astro markers found in head: ${headMarkers.join(", ")}`);
 						await reader.cancel();
 						return {
 							url: originalUrl,
@@ -204,6 +200,8 @@ export async function isAstroWebsite(
 			}
 		}
 
+		// maybe there was never a head tag or they never closed it
+		// readingHead probably isnt best variable name but idk
 		if (readingHead) {
 			debugLog("[isAstroWebsite] head never fully closed");
 			const foundGeneratorTag = parseGeneratorTags(
@@ -252,7 +250,7 @@ export async function isAstroWebsite(
 				styleWhereRegex,
 				styleAttrRegex,
 				debugLog,
-				"PARTIAL_HEAD",
+				"NO_HEAD_END",
 			);
 			if (headMarkers.length > 0) {
 				debugLog(`[isAstroWebsite] Astro markers found: ${headMarkers.join(", ")}`);
@@ -285,13 +283,9 @@ export async function isAstroWebsite(
 			debugLog(`[isAstroWebsite] Request timed out after ${String(timeoutMs)}ms`);
 			throw error;
 		}
-		debugLog("[isAstroWebsite] Error encountered:", error);
-		return {
-			url: originalUrl,
-			lastFetchedUrl: url.toString(),
-			isAstro: false,
-			mechanism: "Unknown error occurred",
-		};
+
+		debugLog("[isAstroWebsite] Unknown error encountered:", error);
+		throw error;
 	} finally {
 		if (timeoutId) {
 			clearTimeout(timeoutId);
