@@ -37,7 +37,11 @@ export const GET: APIRoute = async ({ url }) => {
 
 	try {
 		const result = await isAstroWebsite(decodedUrl);
-		return new Response(JSON.stringify(result), {
+		const responseData = {
+			...result,
+			...(result.mechanism === "Bot challenge detected" && { botChallenge: true }),
+		};
+		return new Response(JSON.stringify(responseData), {
 			status: 200,
 			headers: {
 				"Content-Type": "application/json",

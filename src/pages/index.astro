@@ -34,12 +34,24 @@ if (urlParam) {
 		}
 }
 
+if (result?.mechanism === "Bot challenge detected") checkingError = true;
+
 if (result) {
-	const displayUrl = result.url.replace(/^https?:\/\//, "");
-	title = `is ${displayUrl} Astro? ${result.isAstro ? "Probably" : "Probably not"}`;
-	description = `${result.mechanism} ${
-		result.astroVersion ? `Astro Version: ${result.astroVersion}` : ""
-	} ${result.starlightVersion ? `Starlight Version: ${result.starlightVersion}` : ""}`;
+  const displayUrl = result.url.replace(/^https?:\/\//, "");
+  
+  let status;
+  if (checkingError) {
+    status = "Not Sure";
+  } else if (result.isAstro) {
+    status = "Probably";
+  } else {
+    status = "Probably not";
+  }
+  
+  title = `is ${displayUrl} Astro? ${status}`;
+  description = `${result.mechanism} ${
+    result.astroVersion ? `Astro Version: ${result.astroVersion}` : ""
+  } ${result.starlightVersion ? `Starlight Version: ${result.starlightVersion}` : ""}`;
 }
 ---
 

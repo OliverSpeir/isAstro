@@ -20,6 +20,7 @@ There is an `/api` route for JSON that will return
 
 ```js
 {
+    botChallenge?: boolean;
     starlightVersion?: string;
     astroVersion?: string;
     url: string;
