@@ -52,7 +52,7 @@ export function getAstroMarkers(
 	}
 	if (astroClassRegex.test(fragment)) {
 		debugLog(`[${phaseLabel}] Found "astro-cid in class" in: "${fragment.slice(0, 200)}"`);
-		markers.push("astro-cid in a class");
+		markers.push("astro-cid- class");
 	}
 	if (astroAssetRegex.test(fragment)) {
 		debugLog(`[${phaseLabel}] Found "_astro/ asset reference" in: "${fragment.slice(0, 200)}"`);
@@ -64,7 +64,7 @@ export function getAstroMarkers(
 	}
 	if (styleAttrRegex.test(fragment)) {
 		debugLog(`[${phaseLabel}] Found "[data-astro-cid-...]" in: "${fragment.slice(0, 200)}"`);
-		markers.push("[data-astro-cid-...] usage in style");
+		markers.push("data-astro-cid- usage");
 	}
 
 	return markers;

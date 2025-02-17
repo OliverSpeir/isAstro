@@ -167,7 +167,7 @@ export async function isAstroWebsite(
 							url: originalUrl,
 							lastFetchedUrl: response.url,
 							isAstro: true,
-							mechanism: `Found ${headMarkers.join(" & ")}`,
+							mechanism: `Found ${new Intl.ListFormat("en").format(headMarkers)}`,
 						};
 					}
 
@@ -194,7 +194,8 @@ export async function isAstroWebsite(
 						url: originalUrl,
 						lastFetchedUrl: response.url,
 						isAstro: true,
-						mechanism: `Found ${bodyMarkers.join(" & ")}`,
+						mechanism: `Found ${new Intl.ListFormat('en').format(bodyMarkers)}`,
+						
 					};
 				}
 			}
@@ -258,7 +259,7 @@ export async function isAstroWebsite(
 					url: originalUrl,
 					lastFetchedUrl: response.url,
 					isAstro: true,
-					mechanism: `Found ${headMarkers.join(" & ")}`,
+					mechanism: `Found ${new Intl.ListFormat('en').format(headMarkers)}`,
 				};
 			}
 
