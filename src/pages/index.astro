@@ -8,7 +8,6 @@ let result = null;
 let checkingError = null;
 const urlParam = Astro.url.searchParams.get("url");
 
-
 if (Astro.request.method === "POST") {
 	const formData = await Astro.request.formData();
 	const urlValue = formData.get("url");
@@ -63,6 +62,7 @@ if (result) {
 					{result.astroVersion && <p>Astro Version: {result.astroVersion}</p>}
 					{result.starlightVersion && <p>Starlight Version: {result.starlightVersion}</p>}
 				</div>
+				<button id="copyButton" type="button">Copy to Share Results</button>
 			)
 		}
 		<form method="POST" novalidate>
@@ -70,6 +70,25 @@ if (result) {
 			<button type="submit">Check Website</button>
 		</form>
 	</main>
+	<script>
+		const copyButton = document.getElementById("copyButton") as HTMLButtonElement;
+
+		if (copyButton) {
+			copyButton.addEventListener("click", async () => {
+				const prettyUrl = decodeURIComponent(window.location.href);
+
+				try {
+					await navigator.clipboard.writeText(prettyUrl);
+					copyButton.textContent = "Copied";
+					setTimeout(() => {
+						copyButton.textContent = "Copy to Share Results";
+					}, 2000);
+				} catch (err) {
+					console.error("Failed to copy URL:", err);
+				}
+			});
+		}
+	</script>
 </Layout>
 <style>
 	:root {
@@ -88,7 +107,7 @@ if (result) {
 		text-align: center;
 		padding: 20px;
 		gap: 15px;
-		margin-bottom: 20px;
+		margin-bottom: 10px;
 		border-radius: 2px;
 	}
 	span {
@@ -102,7 +121,8 @@ if (result) {
 	}
 	form {
 		display: grid;
-		gap: 20px;
+		gap: 10px;
+		margin-top: 20px;
 	}
 	input {
 		padding: 7px;
