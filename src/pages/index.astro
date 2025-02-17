@@ -35,6 +35,7 @@ if (urlParam) {
 }
 
 if (result?.mechanism === "Bot challenge detected") checkingError = true;
+if (result?.mechanism === "Invalid content type") checkingError = true;
 
 if (result) {
   const displayUrl = result.url.replace(/^https?:\/\//, "").replace(/\/+$/, "");  
