@@ -33,8 +33,7 @@ export function parseGeneratorTags(
 	return foundAnyTag;
 }
 
-/** Checks for various Astro-related markers in an HTML fragment. */
-export function getAstroMarkers(
+export function getAllAstroMarkers(
 	fragment: string,
 	astroDataAttr: RegExp,
 	astroClassRegex: RegExp,
@@ -75,7 +74,6 @@ export function getAstroMarkers(
 	return markers;
 }
 
-/** Checks for various Astro-related markers in an HTML fragment. */
 export function getAstroHeadMarkers(
 	fragment: string,
 	astroDataAttr: RegExp,
@@ -138,7 +136,7 @@ export function getAstroBodyMarkers(
 	return markers;
 }
 
-/** Checks a chunk of HTML for a meta-refresh redirect. Returns the redirect URL if found. */
+/** Returns the redirect URL if found. */
 export function checkMetaRefresh(
 	fragment: string,
 	metaRefreshRegex: RegExp,
@@ -177,7 +175,7 @@ export function addProtocolToUrlAndTrim(url: string) {
 
 export function isBotChallenge(html: string): boolean {
 	const indicators = [
-		/<title>Just a moment\.\.\.<\/title>/i,
+		// /<title>Just a moment\.\.\.<\/title>/i,
 		/cdn-cgi\/challenge-platform/i,
 		/_cf_chl_opt/i,
 		/cf-spinner/i,
@@ -189,3 +187,26 @@ export function isBotChallenge(html: string): boolean {
 
 	return indicators.some((indicator) => indicator.test(html));
 }
+
+export class CustomError extends Error {
+	constructor(
+		message: string,
+		public readonly originalUrl: string,
+		public readonly lastFetchedUrl?: string,
+	) {
+		super(message);
+		this.name = "CustomError";
+	}
+}
+
+export const metaGeneratorRegex = /<meta[^>]*\bgenerator\b[^>]*content\s*=\s*["']([^"']+)["']/gi;
+export const metaRefreshRegex =
+	/<meta[^>]+http-equiv\s*=\s*["']refresh["'][^>]+content\s*=\s*["']\s*\d+\s*;\s*url\s*=\s*([^"']+)["']/i;
+export const astroDataAttrRegex = /data-astro-[a-zA-Z0-9-]+/i;
+export const astroIslandRegex = /<astro-island\b/i;
+export const astroClassRegex = /class\s*=\s*["'][^"']*astro-/i;
+export const astroAssetRegex =
+	/<(script|link|img|picture|meta[^>]*property\s*=\s*["']og:image["'])[^>]*_astro\//i;
+export const endOfHeadRegex = /<\/head>/i;
+export const styleWhereRegex = /:where\s*\(\.astro-[\w-]+\)/i;
+export const styleAttrRegex = /\[data-astro-[^\]]*\]/i;

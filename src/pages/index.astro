@@ -1,7 +1,12 @@
 ---
 export const prerender = false;
 import Layout from "@layouts/DefaultPage.astro";
-import { isAstroWebsite, isValidUrl, addProtocolToUrlAndTrim } from "@lib/modules/server";
+import {
+	isAstroWebsite,
+	isValidUrl,
+	addProtocolToUrlAndTrim,
+	CustomError,
+} from "@lib/modules/server";
 let title = "isAstro";
 let description = "Check if a website is built with Astro";
 let result = null;
@@ -21,38 +26,44 @@ if (urlParam) {
 	if (!isValidUrl(decodedUrl)) {
 		checkingError = true;
 		result = { isAstro: false, mechanism: "Invalid URL", url: decodedUrl };
-	} else
+	} else {
 		try {
 			result = await isAstroWebsite(decodedUrl);
-		} catch (_) {
-			checkingError = true;
-			result = {
-				isAstro: false,
-				mechanism: "Unable to check",
-				url: decodedUrl,
-			};
+		} catch (error) {
+			if (error instanceof CustomError) {
+				checkingError = true;
+				result = {
+					isAstro: false,
+					mechanism: error.message,
+					url: error.originalUrl,
+					lastFetchedUrl: error.lastFetchedUrl,
+				};
+			} else {
+				checkingError = true;
+				result = {
+					isAstro: false,
+					mechanism: "Unable to check",
+					url: decodedUrl,
+				};
+			}
 		}
+	}
 }
 
-if (result?.mechanism === "Bot challenge detected") checkingError = true;
-if (result?.mechanism === "Invalid content type") checkingError = true;
-
 if (result) {
-  const displayUrl = result.url.replace(/^https?:\/\//, "").replace(/\/+$/, "");  
-  
-  let status;
-  if (checkingError) {
-    status = "Not Sure";
-  } else if (result.isAstro) {
-    status = "Probably";
-  } else {
-    status = "Probably not";
-  }
-  
-  title = `is ${displayUrl} Astro? ${status}`;
-  description = `${result.mechanism} ${
-    result.astroVersion ? `Astro Version: ${result.astroVersion}` : ""
-  } ${result.starlightVersion ? `Starlight Version: ${result.starlightVersion}` : ""}`;
+	const displayUrl = result.url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+
+	let status;
+	if (checkingError) {
+		status = "Not Sure";
+	} else if (result.isAstro) {
+		status = "Probably";
+	} else {
+		status = "Probably not";
+	}
+
+	title = `is ${displayUrl} Astro? ${status}`;
+	description = `${result.mechanism}${result.astroVersion ? ` Astro Version: ${result.astroVersion}` : ""}${result.starlightVersion ? ` Starlight Version: ${result.starlightVersion}` : ""}`;
 }
 ---
 
@@ -61,21 +72,25 @@ if (result) {
 		<h1>isAstro</h1>
 		{
 			result && (
-				<div>
-					<span>{result.isAstro ? "✅" : "❌"}</span>
-					{checkingError ? (
-						<p>
-							{result.mechanism} <a href={result.url}>{result.url}</a>
-						</p>
-					) : (
-						<p>
-							{result.mechanism} on <a href={result.url}>{result.url}</a>
-						</p>
-					)}
-					{result.astroVersion && <p>Astro Version: {result.astroVersion}</p>}
-					{result.starlightVersion && <p>Starlight Version: {result.starlightVersion}</p>}
-				</div>
-				<button id="copyButton" type="button">Copy to Share Results</button>
+				<>
+					<div>
+						<span>{result.isAstro ? "✅" : "❌"}</span>
+						{checkingError ? (
+							<p>
+								{result.mechanism} <a href={result.url}>{result.url}</a>
+							</p>
+						) : (
+							<p>
+								{result.mechanism} on <a href={result.url}>{result.url}</a>
+							</p>
+						)}
+						{result.astroVersion && <p>Astro Version: {result.astroVersion}</p>}
+						{result.starlightVersion && <p>Starlight Version: {result.starlightVersion}</p>}
+					</div>
+					<button id="copyButton" type="button">
+						Copy to Share Results
+					</button>
+				</>
 			)
 		}
 		<form method="POST" novalidate>

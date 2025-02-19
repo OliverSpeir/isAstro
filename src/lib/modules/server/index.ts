@@ -2,13 +2,23 @@ import {
 	parseGeneratorTags,
 	getAstroHeadMarkers,
 	getAstroBodyMarkers,
-	getAstroMarkers,
+	getAllAstroMarkers,
 	checkMetaRefresh,
 	isValidUrl,
 	addProtocolToUrlAndTrim,
 	isBotChallenge,
+	CustomError,
+	metaGeneratorRegex,
+	metaRefreshRegex,
+	astroDataAttrRegex,
+	astroClassRegex,
+	astroIslandRegex,
+	astroAssetRegex,
+	endOfHeadRegex,
+	styleWhereRegex,
+	styleAttrRegex,
 } from "./utils";
-export { isValidUrl, addProtocolToUrlAndTrim };
+export { isValidUrl, addProtocolToUrlAndTrim, CustomError };
 
 export async function isAstroWebsite(
 	url: string | URL,
@@ -37,22 +47,10 @@ export async function isAstroWebsite(
 	const { signal } = controller;
 	let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-	const metaGeneratorRegex = /<meta[^>]*\bgenerator\b[^>]*content\s*=\s*["']([^"']+)["']/gi;
-	const metaRefreshRegex =
-		/<meta[^>]+http-equiv\s*=\s*["']refresh["'][^>]+content\s*=\s*["']\s*\d+\s*;\s*url\s*=\s*([^"']+)["']/i;
-	const astroDataAttrRegex = /data-astro-[a-zA-Z0-9-]+/i;
-	const astroIslandRegex = /<astro-island\b/i;
-	const astroClassRegex = /class\s*=\s*["'][^"']*astro-/i;
-	const astroAssetRegex =
-		/<(script|link|img|picture|meta[^>]*property\s*=\s*["']og:image["'])[^>]*_astro\//i;
-	const endOfHeadRegex = /<\/head>/i;
-	const styleWhereRegex = /:where\s*\(\.astro-[\w-]+\)/i;
-	const styleAttrRegex = /\[data-astro-[^\]]*\]/i;
-
 	const astroVersionRef: { value?: string } = {};
 	const starlightVersionRef: { value?: string } = {};
 
-	let response: Response;
+	let response: Response | undefined;
 	try {
 		timeoutId = setTimeout(() => {
 			controller.abort();
@@ -61,6 +59,7 @@ export async function isAstroWebsite(
 		debugLog(`[isAstroWebsite] Fetching URL: ${url}`);
 		response = await fetch(url, {
 			signal,
+			redirect: "manual",
 			headers: {
 				"User-Agent":
 					"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -68,21 +67,59 @@ export async function isAstroWebsite(
 				"Accept-Language": "en-US,en;q=0.5",
 			},
 		});
+
+		// Handle error status codes first
+		if (response.status >= 400) {
+			throw new CustomError(
+				`Server responded with status: ${String(response.status)}`,
+				originalUrl,
+				response.url,
+			);
+		}
+
+		const setCookieHeader = response.headers.get("set-cookie");
+		const cookies = setCookieHeader
+			? setCookieHeader
+					.split(",")
+					.map((cookie) => cookie.trim().split(";")[0])
+					.filter(Boolean)
+			: [];
+
+		debugLog(`[isAstroWebsite] Collected cookies: ${cookies.join(", ")}`);
+
+		// this is to work around an infinite redirect pattern I saw on a site
+		if (response.status >= 300) {
+			debugLog(`[isAstroWebsite] Making second request with collected cookies`);
+			clearTimeout(timeoutId);
+			timeoutId = setTimeout(() => {
+				controller.abort();
+			}, timeoutMs);
+
+			response = await fetch(url, {
+				signal,
+				redirect: "follow",
+				headers: {
+					"User-Agent":
+						"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+					Accept: "text/html",
+					"Accept-Language": "en-US,en;q=0.5",
+					Cookie: cookies.join("; "),
+				},
+			});
+		}
 		clearTimeout(timeoutId);
 
 		const contentType = response.headers.get("content-type");
 		if (contentType && !contentType.includes("text/html")) {
 			debugLog(`[isAstroWebsite] Invalid content type: ${contentType}`);
-			return {
-				url: originalUrl,
-				lastFetchedUrl: response.url,
-				isAstro: false,
-				mechanism: "Invalid content type",
-			};
+			throw new CustomError("Invalid content type", originalUrl, response.url);
 		}
-
 		if (!response.body) {
-			throw new Error("Response body is null or undefined.");
+			throw new CustomError(
+				`Received response without body (status: ${response.status.toString()})`,
+				originalUrl,
+				response.url,
+			);
 		}
 
 		const reader = response.body.getReader();
@@ -123,15 +160,10 @@ export async function isAstroWebsite(
 				);
 			}
 
-			if (chunkCount < 3   && isBotChallenge(chunk)) {
+			if (chunkCount < 4 && isBotChallenge(chunk)) {
 				debugLog("[isAstroWebsite] Detected bot challenge page");
 				await reader.cancel();
-				return {
-					url: originalUrl,
-					lastFetchedUrl: response.url,
-					isAstro: false,
-					mechanism: "Bot challenge detected",
-				};
+				throw new CustomError("Bot challenge detected", originalUrl, response.url);
 			}
 
 			if (readingHead) {
@@ -261,7 +293,7 @@ export async function isAstroWebsite(
 				}
 			}
 
-			const headMarkers = getAstroMarkers(
+			const headMarkers = getAllAstroMarkers(
 				headHtml,
 				astroDataAttrRegex,
 				astroClassRegex,
@@ -300,20 +332,20 @@ export async function isAstroWebsite(
 		};
 	} catch (error) {
 		if (error instanceof Error && error.name === "AbortError") {
-			debugLog(`[isAstroWebsite] Request timed out after ${String(timeoutMs)}ms`);
-			throw error;
+			throw new CustomError("Request timed out", originalUrl, response?.url);
 		}
-
-		debugLog("[isAstroWebsite] Unknown error encountered:", error);
+		debugLog("[isAstroWebsite] error thrown:", error);
 		throw error;
 	} finally {
 		if (timeoutId) {
 			clearTimeout(timeoutId);
 		}
-		const endTime = Date.now();
-		const timeMs = endTime - startTime;
-		debugLog(
-			`[isAstroWebsite] Finished. Total time: ${String(timeMs)}ms, total bytes: ${String(totalBytes)}`,
-		);
+		if (debug) {
+			const endTime = Date.now();
+			const timeMs = endTime - startTime;
+			debugLog(
+				`[isAstroWebsite] Finished. Total time: ${String(timeMs)}ms, total bytes: ${String(totalBytes)}`,
+			);
+		}
 	}
 }
