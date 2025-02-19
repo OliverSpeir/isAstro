@@ -1,6 +1,11 @@
 export const prerender = false;
 import type { APIRoute } from "astro";
-import { isAstroWebsite, isValidUrl, addProtocolToUrlAndTrim } from "@lib/modules/server";
+import {
+	isAstroWebsite,
+	isValidUrl,
+	addProtocolToUrlAndTrim,
+	CustomError,
+} from "@lib/modules/server";
 
 export const GET: APIRoute = async ({ url }) => {
 	const urlParam = url.searchParams.get("url");
@@ -37,23 +42,38 @@ export const GET: APIRoute = async ({ url }) => {
 
 	try {
 		const result = await isAstroWebsite(decodedUrl);
-		const responseData = {
-			...result,
-			...(result.mechanism === "Bot challenge detected" && { botChallenge: true }),
-		};
-		return new Response(JSON.stringify(responseData), {
+		return new Response(JSON.stringify(result), {
 			status: 200,
 			headers: {
 				"Content-Type": "application/json",
 			},
 		});
-	} catch (_) {
+	} catch (error) {
+		if (error instanceof CustomError) {
+			return new Response(
+				JSON.stringify({
+					isAstro: false,
+					mechanism: error.message,
+					url: error.originalUrl,
+					lastFetchedUrl: error.lastFetchedUrl,
+				}),
+				{
+					status: 500,
+					headers: {
+						"Content-Type": "application/json",
+					},
+				},
+			);
+		}
+
 		return new Response(
 			JSON.stringify({
-				error: `Unable to check ${decodedUrl}`,
+				isAstro: false,
+				mechanism: "Unknown error",
+				url: decodedUrl,
 			}),
 			{
-				status: 400,
+				status: 500,
 				headers: {
 					"Content-Type": "application/json",
 				},
