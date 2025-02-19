@@ -13,7 +13,7 @@ void test("No meta tags; uses data-astro-cid attribute", async () => {
 	// change second arg to true to see debug logs
 	const result = await isAstroWebsite("http://example.com", false);
 	assert.equal(result.isAstro, true, "Expected site to be recognized as Astro (data-astro-cid)");
-	assert.match(result.mechanism, /astro-cid/i);
+	assert.match(result.mechanism, /data-astro/i);
 });
 
 // (2) No meta tags; astro-cid in class + style :where usage

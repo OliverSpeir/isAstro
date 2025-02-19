@@ -8,7 +8,8 @@ Looks for:
 
 1. Generator tag
 2. use of Astro's scoped css markers
-3. use of `_astro/` directory
+3. use of `data-astro-` attributes or `astro-` class
+4. use of `_astro/` directory
 
 Attempts to be fast and not download more than needed, but will try to wait for the entire head to get a good faith attempt to find the generator tag because it's nice to see the version
 
