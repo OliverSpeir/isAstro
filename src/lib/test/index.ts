@@ -1,78 +1,241 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isAstroWebsite } from "@modules/server";
-import { mockFetchResponse } from "./utils";
+import { test } from "node:test";
+import {
+	clearDetectionCache,
+	CustomError,
+	getCachedAstroDetection,
+	isAstroWebsite,
+	isValidUrl,
+} from "@modules/server";
+import { normalizeWebsiteUrl } from "@modules/server/request";
+import { createMockResponse, createSequenceFetch, type FetchCall } from "./utils";
 
-// (1) No meta tags, but data-astro-cid attribute used
-void test("No meta tags; uses data-astro-cid attribute", async () => {
-	mockFetchResponse([
-		"<!DOCTYPE html><html><head><title>Test</title></head><body>",
-		"<div data-astro-cid-abcd>Some content</div></body></html>",
+const targetUrl = "https://example.com/";
+
+void test("detects body markers after a closed head", async () => {
+	const fetch = createSequenceFetch([
+		createMockResponse([
+			"<!doctype html><html><head><title>Test</title></head><body>",
+			"<div data-astro-cid-abcd>Some content</div></body></html>",
+		]),
 	]);
-
-	// change second arg to true to see debug logs
-	const result = await isAstroWebsite("http://example.com", false);
-	assert.equal(result.isAstro, true, "Expected site to be recognized as Astro (data-astro-cid)");
+	const result = await isAstroWebsite(targetUrl, { fetch });
+	assert.equal(result.isAstro, true);
 	assert.match(result.mechanism, /data-astro/i);
 });
 
-// (2) No meta tags; astro-cid in class + style :where usage
-void test("No meta tags; astro-cid in class, plus style :where usage", async () => {
-	mockFetchResponse([
-		"<!DOCTYPE html><html><head><style>:where(.astro-xyz){color:red;}</style></head><body>",
-		'<div class="some astro-cid-abcd">Hello</div></body></html>',
+void test("scans body bytes that share the closing-head chunk", async () => {
+	const fetch = createSequenceFetch([
+		createMockResponse([
+			'<!doctype html><html><head></head><body><astro-island component-url="/_astro/a.js"></astro-island></body></html>',
+		]),
 	]);
-
-	// change second arg to true to see debug logs
-	const result = await isAstroWebsite("http://example.com", false);
+	const result = await isAstroWebsite(targetUrl, { fetch });
 	assert.equal(result.isAstro, true);
-	assert.match(
-		result.mechanism,
-		/astro-cid|:where\(.astro/i,
-		"Expected marker mention in the mechanism",
+	assert.match(result.mechanism, /astro-island|_astro/);
+});
+
+void test("detects split, reordered Astro and Starlight generator tags", async () => {
+	const fetch = createSequenceFetch([
+		createMockResponse([
+			'<!doctype html><html><head><meta content="Astro 5.1" na',
+			'me="generator"><meta content="Starlight 0.30" name="generator"></head>',
+			"<body></body></html>",
+		]),
+	]);
+	const result = await isAstroWebsite(targetUrl, { fetch });
+	assert.equal(result.isAstro, true);
+	assert.equal(result.isStarlight, true);
+	assert.equal(result.astroVersion, "5.1");
+	assert.equal(result.starlightVersion, "0.30");
+});
+
+void test("treats a versionless Starlight generator as Astro", async () => {
+	const fetch = createSequenceFetch([
+		createMockResponse([
+			'<!doctype html><html><head><meta content="Starlight" name="generator"></head><body></body></html>',
+		]),
+	]);
+	const result = await isAstroWebsite(targetUrl, { fetch });
+	assert.equal(result.isAstro, true);
+	assert.equal(result.isStarlight, true);
+	assert.equal(result.starlightVersion, undefined);
+});
+
+void test("does not accept unrelated generator attributes", async () => {
+	const fetch = createSequenceFetch([
+		createMockResponse([
+			'<!doctype html><html><head><meta data-kind="generator" content="Astro 5"></head><body>Plain HTML</body></html>',
+		]),
+	]);
+	const result = await isAstroWebsite(targetUrl, { fetch });
+	assert.equal(result.isAstro, false);
+});
+
+void test("follows each HTTP redirect once and checks the final response", async () => {
+	const calls: FetchCall[] = [];
+	const fetch = createSequenceFetch(
+		[
+			new Response(null, { status: 302, headers: { Location: "/destination" } }),
+			createMockResponse([
+				'<!doctype html><html><head><meta name="generator" content="Astro 5"></head></html>',
+			]),
+		],
+		calls,
+	);
+	const result = await isAstroWebsite(targetUrl, { fetch });
+	assert.equal(result.isAstro, true);
+	assert.deepEqual(
+		calls.map(({ url }) => url),
+		[targetUrl, "https://example.com/destination"],
 	);
 });
 
-// (3) No meta tags; _astro/ path found
-void test("No meta tags; _astro/ path found", async () => {
-	mockFetchResponse([
-		"<!DOCTYPE html><html><head></head><body>",
-		'<script src="/_astro/main.js"></script></body></html>',
-	]);
-
-	// change second arg to true to see debug logs
-	const result = await isAstroWebsite("http://example.com", false);
-	assert.equal(result.isAstro, true, "Expected _astro/ usage to indicate Astro");
-	assert.match(result.mechanism, /_astro\//);
+void test("detects a meta refresh split across response chunks", async () => {
+	const calls: FetchCall[] = [];
+	const fetch = createSequenceFetch(
+		[
+			createMockResponse([
+				'<!doctype html><html><head><meta http-equiv="ref',
+				'RESH" content="0; url=/next"></head></html>',
+			]),
+			createMockResponse([
+				'<!doctype html><html><head><meta name="generator" content="Astro"></head></html>',
+			]),
+		],
+		calls,
+	);
+	const result = await isAstroWebsite(targetUrl, { fetch });
+	assert.equal(result.isAstro, true);
+	assert.equal(calls[1]?.url, "https://example.com/next");
 });
 
-// (4) Astro meta tag only
-void test("Astro meta tag only", async () => {
-	mockFetchResponse([
-		"<!DOCTYPE html><html><head>",
-		'<meta name="generator" content="Astro 2.0">',
-		"</head><body>Hello world</body></html>",
-	]);
+void test("rejects private initial and redirect targets", async () => {
+	let fetchCount = 0;
+	const unusedFetch: typeof globalThis.fetch = () => {
+		fetchCount++;
+		return Promise.resolve(createMockResponse(["<html></html>"]));
+	};
+	await assert.rejects(
+		isAstroWebsite("http://127.0.0.1", { fetch: unusedFetch }),
+		(error: unknown) => error instanceof CustomError && /disallowed/i.test(error.message),
+	);
+	assert.equal(fetchCount, 0);
 
-	// change second arg to true to see debug logs
-	const result = await isAstroWebsite("http://example.com", false);
-	assert.equal(result.isAstro, true);
-	assert.equal(result.astroVersion, "2.0", "Expected astroVersion to be 2.0");
+	const redirectFetch = createSequenceFetch([
+		new Response(null, { status: 302, headers: { Location: "http://10.0.0.1/" } }),
+	]);
+	await assert.rejects(
+		isAstroWebsite(targetUrl, { fetch: redirectFetch }),
+		(error: unknown) => error instanceof CustomError && /disallowed/i.test(error.message),
+	);
 });
 
-// (5) Both Astro & Starlight meta tags
-void test("Both Astro & Starlight meta tags", async () => {
-	mockFetchResponse([
-		"<!DOCTYPE html><html><head>",
-		// same chunk here due to being too lazy to properly fix this, but it's very unlikely to happen in real life
-		`<meta name="generator" content="Astro 2.0">
-		 <meta name="generator" content="Starlight 1.5">`,
-		"</head><body></body></html>",
-	]);
+void test("rejects final HTTP errors and non-HTML responses", async () => {
+	await assert.rejects(
+		isAstroWebsite(targetUrl, {
+			fetch: createSequenceFetch([createMockResponse(["not found"], { status: 404 })]),
+		}),
+		(error: unknown) => error instanceof CustomError && error.message.includes("status: 404"),
+	);
+	await assert.rejects(
+		isAstroWebsite(targetUrl, {
+			fetch: createSequenceFetch([
+				createMockResponse(["{}"], { headers: { "Content-Type": "application/json" } }),
+			]),
+		}),
+		(error: unknown) => error instanceof CustomError && /content type/i.test(error.message),
+	);
+});
 
-	// change second arg to true to see debug logs
-	const result = await isAstroWebsite("http://example.com", false);
+void test("enforces the response byte limit", async () => {
+	await assert.rejects(
+		isAstroWebsite(targetUrl, {
+			fetch: createSequenceFetch([createMockResponse(["<html>", "x".repeat(128)])]),
+			maxBytes: 64,
+		}),
+		(error: unknown) => error instanceof CustomError && error.message.includes("byte limit"),
+	);
+});
+
+void test("contains response-stream cancellation failures after early detection", async () => {
+	const body = new ReadableStream<Uint8Array>({
+		start(controller) {
+			controller.enqueue(
+				new TextEncoder().encode(
+					'<!doctype html><html><head><meta name="generator" content="Astro 5"></head><body>',
+				),
+			);
+		},
+		cancel() {
+			throw new Error("cancel failed");
+		},
+	});
+	const result = await isAstroWebsite(targetUrl, {
+		fetch: createSequenceFetch([new Response(body, { headers: { "Content-Type": "text/html" } })]),
+	});
 	assert.equal(result.isAstro, true);
-	assert.equal(result.astroVersion, "2.0");
-	assert.equal(result.starlightVersion, "1.5");
+	await new Promise((resolve) => setTimeout(resolve, 0));
+});
+
+void test("keeps the timeout active while the response body is stalled", async () => {
+	const stalledBody = new ReadableStream<Uint8Array>({
+		start() {
+			// Intentionally never enqueue or close.
+		},
+	});
+	await assert.rejects(
+		isAstroWebsite(targetUrl, {
+			fetch: createSequenceFetch([
+				new Response(stalledBody, { headers: { "Content-Type": "text/html" } }),
+			]),
+			timeoutMs: 25,
+		}),
+		(error: unknown) => error instanceof CustomError && error.message === "Request timed out",
+	);
+});
+
+void test("coalesces concurrent cached checks and reuses the result", async () => {
+	clearDetectionCache();
+	let fetchCount = 0;
+	const fetch: typeof globalThis.fetch = async () => {
+		fetchCount++;
+		await new Promise((resolve) => setTimeout(resolve, 5));
+		return createMockResponse([
+			'<!doctype html><html><head><meta name="generator" content="Astro 5"></head></html>',
+		]);
+	};
+	const options = { fetch, cacheTtlMs: 1_000 };
+	const [first, second] = await Promise.all([
+		getCachedAstroDetection(targetUrl, options),
+		getCachedAstroDetection(targetUrl, options),
+	]);
+	const third = await getCachedAstroDetection(targetUrl, options);
+	assert.equal(fetchCount, 1);
+	assert.strictEqual(first, second);
+	assert.strictEqual(second, third);
+	clearDetectionCache();
+});
+
+void test("normalizes ordinary input without decoding it twice", () => {
+	assert.deepEqual(normalizeWebsiteUrl(" example.com/path%252Fvalue "), {
+		ok: true,
+		url: "https://example.com/path%252Fvalue",
+	});
+	assert.equal(normalizeWebsiteUrl("").ok, false);
+	assert.equal(normalizeWebsiteUrl("%").ok, false);
+});
+
+void test("allows public HTTP targets and rejects unsafe URL forms", () => {
+	assert.equal(isValidUrl("https://astro.build/"), true);
+	assert.equal(isValidUrl("http://example.com:8080/path"), true);
+	for (const value of [
+		"ftp://example.com/file",
+		"http://localhost/",
+		"http://192.168.1.1/",
+		"http://[::1]/",
+		"https://user:password@example.com/",
+	]) {
+		assert.equal(isValidUrl(value), false, value);
+	}
 });

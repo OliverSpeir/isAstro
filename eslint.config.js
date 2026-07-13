@@ -1,13 +1,16 @@
 // @ts-check
 import eslint from "@eslint/js";
+import { defineConfig } from "eslint/config";
 import eslintPluginAstro from "eslint-plugin-astro";
 import globals from "globals";
+import { fileURLToPath } from "node:url";
 import tseslint from "typescript-eslint";
 
 const typescriptEslint = tseslint.plugin;
 const tsParser = tseslint.parser;
+const tsconfigRootDir = fileURLToPath(new URL(".", import.meta.url));
 
-export default tseslint.config(
+export default defineConfig(
 	{
 		ignores: [
 			"**/node_modules",
@@ -28,7 +31,7 @@ export default tseslint.config(
 			parser: tsParser,
 			parserOptions: {
 				project: ["./tsconfig.json"],
-				tsconfigRootDir: ".",
+				tsconfigRootDir,
 			},
 		},
 		plugins: {

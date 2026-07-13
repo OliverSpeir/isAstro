@@ -11,6 +11,8 @@
 		<slot name="meta" />
 		<meta name="generator" content={Astro.generator} />
 		<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+		<meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)" />
+		<meta name="theme-color" content="#f4f4f5" media="(prefers-color-scheme: light)" />
 		<link rel="sitemap" href="/sitemap-index.xml" />
 		<slot name="head-bottom" />
 	</head>
@@ -19,18 +21,93 @@
 	</body>
 </html>
 
-<style>
+<style is:global>
+	:root {
+		color-scheme: dark light;
+		--page-bg: #09090b;
+		--surface: #18181b;
+		--surface-raised: #202024;
+		--surface-hover: #29292e;
+		--border: #3f3f46;
+		--control-bg: #111113;
+		--control-border: #52525b;
+		--control-border-hover: #71717a;
+		--text: #fafafa;
+		--text-muted: #b4b4bc;
+		--placeholder: #8b8b95;
+		--link: #e4e4e7;
+		--footer-link: #b4b4bc;
+		--focus: #60a5fa;
+		--success-bg: #062d22;
+		--success-border: #16815e;
+		--success-text: #5ee8a4;
+		--error-bg: #3b1115;
+		--error-border: #c2414f;
+		--error-text: #ff9ca5;
+		--neutral-bg: #202024;
+		--neutral-border: #71717a;
+		--neutral-text: #e4e4e7;
+		--status-label: #b4b4bc;
+		--status-value: #e4e4e7;
+		--shadow: 0 24px 60px rgba(0, 0, 0, 0.38);
+	}
+
+	@media (prefers-color-scheme: light) {
+		:root {
+			--page-bg: #f4f4f5;
+			--surface: #ffffff;
+			--surface-raised: #fafafa;
+			--surface-hover: #f1f1f2;
+			--border: #d4d4d8;
+			--control-bg: #ffffff;
+			--control-border: #a1a1aa;
+			--control-border-hover: #71717a;
+			--text: #18181b;
+			--text-muted: #52525b;
+			--placeholder: #71717a;
+			--link: #3f3f46;
+			--footer-link: #52525b;
+			--focus: #2563eb;
+			--success-bg: #edf9f3;
+			--success-border: #3a9b74;
+			--success-text: #08603f;
+			--error-bg: #fff1f2;
+			--error-border: #d14a58;
+			--error-text: #a51d2d;
+			--neutral-bg: #f4f4f5;
+			--neutral-border: #a1a1aa;
+			--neutral-text: #3f3f46;
+			--status-label: #52525b;
+			--status-value: #27272a;
+			--shadow: 0 20px 48px rgba(24, 24, 27, 0.12);
+		}
+	}
+
+	html {
+		background-color: var(--page-bg);
+	}
+
 	body {
-		background-color: #000;
-		margin: 0;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		min-height: 100vh;
+		min-height: 100svh;
+		margin: 0;
+		background-color: var(--page-bg);
+		color: var(--text);
 		font-family:
 			system-ui,
 			-apple-system,
+			BlinkMacSystemFont,
+			"Segoe UI",
 			sans-serif;
-		color: white;
+		line-height: 1.5;
+	}
+
+	*,
+	*::before,
+	*::after {
+		box-sizing: border-box;
 	}
 </style>

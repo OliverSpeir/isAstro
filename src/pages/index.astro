@@ -1,18 +1,16 @@
 ---
 export const prerender = false;
 import Layout from "@layouts/DefaultPage.astro";
-import {
-	isAstroWebsite,
-	isValidUrl,
-	addProtocolToUrlAndTrim,
-	CustomError,
-} from "@lib/modules/server";
+import type { DetectionResult } from "@lib/modules/server";
+import { checkWebsiteInput } from "@lib/modules/server/request";
 
 let title = "isAstro";
 let description = "Check if a website is built with Astro";
-let result = null;
-let checkingError = null;
-const urlParam = Astro.url.searchParams.get("url");
+let result: DetectionResult | null = null;
+let checkingError = false;
+let inputError: string | null = null;
+const hasUrlParam = Astro.url.searchParams.has("url");
+const urlParam = Astro.url.searchParams.get("url") ?? "";
 
 if (Astro.request.method === "POST") {
 	const formData = await Astro.request.formData();
@@ -20,199 +18,376 @@ if (Astro.request.method === "POST") {
 	if (typeof urlValue === "string") {
 		return Astro.redirect(`?url=${encodeURIComponent(urlValue.trim())}`);
 	}
+	return Astro.redirect("?url=");
 }
 
-if (urlParam) {
-	const decodedUrl = decodeURIComponent(addProtocolToUrlAndTrim(urlParam));
-	if (!isValidUrl(decodedUrl)) {
-		checkingError = true;
-		result = { isAstro: false, mechanism: "Invalid URL", url: decodedUrl };
+if (hasUrlParam) {
+	if (!urlParam.trim()) {
+		inputError = "Enter a website URL.";
 	} else {
-		try {
-			result = await isAstroWebsite(decodedUrl);
-		} catch (error) {
-			if (error instanceof CustomError) {
-				checkingError = true;
-				result = {
-					isAstro: false,
-					mechanism: error.message,
-					url: error.originalUrl,
-					lastFetchedUrl: error.lastFetchedUrl,
-				};
-			} else {
-				checkingError = true;
-				result = {
-					isAstro: false,
-					mechanism: "Unable to check",
-					url: decodedUrl,
-				};
-			}
+		const check = await checkWebsiteInput(urlParam);
+		if (check.ok) {
+			result = check.result;
+		} else if (check.kind !== "request") {
+			inputError = check.message;
+		} else {
+			checkingError = true;
+			result = {
+				isAstro: false,
+				isStarlight: false,
+				mechanism: check.message,
+				url: check.normalizedUrl,
+				lastFetchedUrl: check.lastFetchedUrl ?? check.normalizedUrl,
+			};
 		}
 	}
 }
 
+Astro.response.headers.set(
+	"Cache-Control",
+	hasUrlParam
+		? "public, max-age=0, s-maxage=300, stale-while-revalidate=600"
+		: "public, max-age=0, s-maxage=3600, stale-while-revalidate=86400",
+);
+
 if (result) {
 	const displayUrl = result.url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-	let status = checkingError ? "Not Sure" : result.isAstro ? "Probably" : "Probably not";
+	const status = checkingError ? "Not Sure" : result.isAstro ? "Probably" : "Probably not";
 	title = `is ${displayUrl} Astro? ${status}`;
 	description = `${result.mechanism}${result.astroVersion ? ` Astro Version: ${result.astroVersion}` : ""}${result.starlightVersion ? ` Starlight Version: ${result.starlightVersion}` : ""}`;
 }
+
+function generatorEvidence(name: "Astro" | "Starlight", version?: string): string {
+	return `Found generator tag: "${name}${version ? ` ${version}` : ""}"`;
+}
+
+function astroEvidence(value: DetectionResult): string {
+	if (value.astroVersion) return generatorEvidence("Astro", value.astroVersion);
+	if (value.mechanism === "Found generator meta tag" && !value.isStarlight) {
+		return generatorEvidence("Astro");
+	}
+	if (value.isStarlight) return "Detected through the Starlight generator tag";
+	return value.mechanism;
+}
+
+const apiHref = result ? `/api?url=${encodeURIComponent(result.url)}` : "/openapi.json";
+const describedBy = inputError ? "url-error" : undefined;
+const astroResultEvidence = result ? astroEvidence(result) : "";
+const starlightResultEvidence = result
+	? generatorEvidence("Starlight", result.starlightVersion)
+	: "";
 ---
 
 <Layout {title} {description}>
+	<svg class="icon-sprite" aria-hidden="true">
+		<symbol id="checkmark-icon" viewBox="0 0 24 24">
+			<path
+				fill="none"
+				stroke="currentColor"
+				stroke-dasharray="26"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				stroke-width="2"
+				d="M5 11l6 6l10 -10"></path>
+		</symbol>
+	</svg>
 	<main>
-		<div class="glass-card">
+		<div class="site-panel">
 			<header>
-				<h1 id="page-title">isAstro</h1>
-				<p class="subtitle" id="page-subtitle">
-					Detect if a site is powered by
-					<a href="https://astro.build/">Astro</a>
+				<h1>isAstro</h1>
+				<p class="subtitle">
+					Detect if a site is powered by <a href="https://astro.build/">Astro</a>
 				</p>
 			</header>
 
-			<form method="POST" novalidate>
+			<form method="POST">
+				<label for="website-url">Website URL</label>
 				<input
-					type="url"
+					id="website-url"
+					type="text"
 					name="url"
-					aria-label="Website URL"
-					aria-describedby="page-title page-subtitle"
+					inputmode="url"
+					autocomplete="url"
+					autocapitalize="none"
+					spellcheck="false"
+					aria-invalid={inputError ? "true" : undefined}
+					aria-describedby={describedBy}
+					aria-errormessage={inputError ? "url-error" : undefined}
 					placeholder="https://example.com"
 					required
-					autofocus
-					value={urlParam || ""}
+					autofocus={!hasUrlParam || Boolean(inputError)}
+					value={urlParam}
 				/>
+				{
+					inputError && (
+						<p class="field-error" id="url-error">
+							{inputError}
+						</p>
+					)
+				}
 				<button type="submit">Check Website</button>
 			</form>
 
 			{
 				result && (
-					<div class="result-container">
+					<section class="result-container" aria-labelledby="result-title">
 						<div
 							class={`status-box ${checkingError ? "error" : result.isAstro ? "success" : "neutral"}`}
 						>
-							<p class="status-title">
-								{result.isAstro ? "✓ Astro Detected" : checkingError ? "Error" : "Not using Astro"}
-							</p>
-							<p class="status-mechanism">{result.mechanism}</p>
+							<div class="detection-result">
+								<h2 id="result-title" class="status-title">
+									{result.isAstro && (
+										<svg
+											class="status-icon animate-check"
+											xmlns="http://www.w3.org/2000/svg"
+											width="1em"
+											height="1em"
+											viewBox="0 0 24 24"
+											aria-hidden="true"
+										>
+											<use href="#checkmark-icon" />
+										</svg>
+									)}
+									{result.isAstro
+										? "Astro Detected"
+										: checkingError
+											? "Unable to check"
+											: "Not using Astro"}
+								</h2>
+								<dl class="result-details">
+									<div>
+										<dt>Evidence:</dt>
+										<dd>{astroResultEvidence}</dd>
+									</div>
+								</dl>
+							</div>
 
-							{(result.astroVersion || result.starlightVersion) && (
-								<div class="versions">
-									{result.astroVersion && <span>Astro: {result.astroVersion}</span>}
-									{result.starlightVersion && <span>Starlight: {result.starlightVersion}</span>}
+							{result.isStarlight && (
+								<div class="detection-result">
+									<h3 class="status-title">
+										<svg
+											class="status-icon animate-check"
+											xmlns="http://www.w3.org/2000/svg"
+											width="1em"
+											height="1em"
+											viewBox="0 0 24 24"
+											aria-hidden="true"
+										>
+											<use href="#checkmark-icon" />
+										</svg>
+										Starlight Detected
+									</h3>
+									<dl class="result-details">
+										<div>
+											<dt>Evidence:</dt>
+											<dd>{starlightResultEvidence}</dd>
+										</div>
+									</dl>
 								</div>
 							)}
 						</div>
 
 						<button id="copyButton" type="button" class="copy-link">
-							Copy to Share Results
+							<span id="copyIcon" class="copy-icon" aria-hidden="true">
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									width="1em"
+									height="1em"
+									viewBox="0 0 24 24"
+									aria-hidden="true"
+								>
+									<path d="M0 0h24v24H0z" fill="none" />
+									<path
+										fill="none"
+										stroke="currentColor"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+										stroke-width="1.5"
+										d="M20.829 12.861c.171-.413.171-.938.171-1.986s0-1.573-.171-1.986a2.25 2.25 0 0 0-1.218-1.218c-.413-.171-.938-.171-1.986-.171H11.1c-1.26 0-1.89 0-2.371.245a2.25 2.25 0 0 0-.984.984C7.5 9.209 7.5 9.839 7.5 11.1v6.525c0 1.048 0 1.573.171 1.986c.229.551.667.99 1.218 1.218c.413.171.938.171 1.986.171s1.573 0 1.986-.171m7.968-7.968a2.25 2.25 0 0 1-1.218 1.218c-.413.171-.938.171-1.986.171s-1.573 0-1.986.171a2.25 2.25 0 0 0-1.218 1.218c-.171.413-.171.938-.171 1.986s0 1.573-.171 1.986a2.25 2.25 0 0 1-1.218 1.218m7.968-7.968a11.68 11.68 0 0 1-7.75 7.9l-.218.068M16.5 7.5v-.9c0-1.26 0-1.89-.245-2.371a2.25 2.25 0 0 0-.983-.984C14.79 3 14.16 3 12.9 3H6.6c-1.26 0-1.89 0-2.371.245a2.25 2.25 0 0 0-.984.984C3 4.709 3 5.339 3 6.6v6.3c0 1.26 0 1.89.245 2.371c.216.424.56.768.984.984c.48.245 1.111.245 2.372.245H7.5"
+									/>
+								</svg>
+							</span>
+							<span id="copiedIcon" class="copy-icon" aria-hidden="true" hidden>
+								<svg
+									xmlns="http://www.w3.org/2000/svg"
+									width="1em"
+									height="1em"
+									viewBox="0 0 24 24"
+									aria-hidden="true"
+								>
+									<use href="#checkmark-icon" />
+								</svg>
+							</span>
+							<span id="copyButtonText">Copy this URL to share results</span>
 						</button>
-					</div>
+						<p
+							id="copyStatus"
+							class="copy-status"
+							role="status"
+							aria-live="polite"
+							aria-atomic="true"
+						/>
+					</section>
 				)
 			}
 
 			<footer>
 				<a href="https://github.com/OliverSpeir/isAstro">Source Code</a>
+				<a href={apiHref}>JSON API</a>
 			</footer>
 		</div>
 	</main>
 
 	<script>
-		const copyButton = document.getElementById("copyButton") as HTMLButtonElement;
-		if (copyButton) {
-			copyButton.addEventListener("click", async () => {
-				const prettyUrl = decodeURIComponent(window.location.href);
+		const copyButton = document.getElementById("copyButton") as HTMLButtonElement | null;
+		const copyButtonText = document.getElementById("copyButtonText");
+		const copyIcon = document.getElementById("copyIcon");
+		const copiedIcon = document.getElementById("copiedIcon");
+		const copyStatus = document.getElementById("copyStatus");
+		let resetTimer: ReturnType<typeof setTimeout> | undefined;
+		const resetCopyState = () => {
+			if (!copyButtonText || !copyIcon || !copiedIcon || !copyStatus) return;
+			copyButtonText.textContent = "Copy this URL to share results";
+			copyIcon.hidden = false;
+			copiedIcon.hidden = true;
+			copiedIcon.classList.remove("animate-check");
+			copyStatus.textContent = "";
+		};
 
-				try {
-					await navigator.clipboard.writeText(prettyUrl);
-					const originalText = copyButton.textContent;
-					copyButton.textContent = "Copied!";
-					setTimeout(() => {
-						copyButton.textContent = originalText;
-					}, 2000);
-				} catch (err) {
-					console.error("Failed to copy URL:", err);
+		copyButton?.addEventListener("click", async () => {
+			if (!copyButtonText || !copyIcon || !copiedIcon || !copyStatus) return;
+
+			try {
+				await navigator.clipboard.writeText(window.location.href);
+				if (resetTimer) clearTimeout(resetTimer);
+				copyButtonText.textContent = "Copied";
+				copyIcon.hidden = true;
+				copiedIcon.hidden = false;
+				copyStatus.textContent = "Result URL copied to the clipboard.";
+
+				if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+					copiedIcon.classList.remove("animate-check");
+					void copiedIcon.offsetWidth;
+					copiedIcon.classList.add("animate-check");
 				}
-			});
-		}
+
+				resetTimer = setTimeout(resetCopyState, 2000);
+			} catch {
+				if (resetTimer) clearTimeout(resetTimer);
+				copyButtonText.textContent = "Copy failed";
+				copyIcon.hidden = false;
+				copiedIcon.hidden = true;
+				copiedIcon.classList.remove("animate-check");
+				copyStatus.textContent = "Could not copy the result URL. Copy it from the address bar.";
+				resetTimer = setTimeout(resetCopyState, 3000);
+			}
+		});
 	</script>
 </Layout>
 
 <style>
-	main {
-		width: 100%;
-		max-width: 448px;
-		padding: 16px;
+	.icon-sprite {
+		position: absolute;
+		width: 0;
+		height: 0;
+		overflow: hidden;
 	}
 
-	.glass-card {
+	main {
+		width: 100%;
+		max-width: 500px;
+		padding: 24px 16px;
+	}
+
+	.site-panel {
 		padding: 32px;
-		border-radius: 16px;
-		backdrop-filter: blur(20px);
-		background-color: rgba(24, 24, 27, 0.5);
-		border: 1px solid rgba(39, 39, 42, 0.5);
-		box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background-color: var(--surface);
+		box-shadow: var(--shadow);
 	}
 
 	header {
-		text-align: center;
 		margin-bottom: 32px;
+		text-align: center;
 	}
 
 	h1 {
+		margin: 0 0 8px;
 		font-size: 1.875rem;
 		font-weight: 700;
-		margin: 0 0 8px 0;
+		letter-spacing: 0;
 	}
 
 	.subtitle {
-		color: #a1a1aa;
-		font-size: 0.875rem;
 		margin: 0;
+		color: var(--text-muted);
+		font-size: 0.875rem;
 	}
 
-	.subtitle a {
-		color: #d4d4d8;
-		text-decoration: underline;
+	a {
+		color: var(--link);
+		text-underline-offset: 3px;
 	}
 
 	form {
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
+		gap: 12px;
+	}
+
+	label {
+		font-size: 0.875rem;
+		font-weight: 600;
 	}
 
 	input {
-		width: 100%;
 		box-sizing: border-box;
-		padding: 12px 16px;
-		background-color: rgba(9, 9, 11, 0.5);
-		border: 1px solid #27272a;
-		border-radius: 8px;
-		color: white;
-		font-size: 1rem;
-		transition: all 0.2s;
+		width: 100%;
+		padding: 12px 14px;
+		border: 1px solid var(--control-border);
+		border-radius: 6px;
+		background-color: var(--control-bg);
+		color: var(--text);
+		font: inherit;
 	}
 
-	input:focus {
-		outline: none;
-		border-color: transparent;
-		box-shadow: 0 0 0 2px #3f3f46;
+	input::placeholder {
+		color: var(--placeholder);
+	}
+
+	input[aria-invalid="true"] {
+		border-color: var(--error-border);
+	}
+
+	.field-error {
+		margin: -4px 0 0;
+		color: var(--error-text);
+		font-size: 0.8125rem;
+	}
+
+	button {
+		font: inherit;
 	}
 
 	button[type="submit"] {
 		width: 100%;
 		padding: 12px 16px;
-		background-color: #27272a;
-		color: white;
-		border: none;
-		border-radius: 8px;
-		font-weight: 500;
+		border: 1px solid var(--control-border);
+		border-radius: 6px;
+		background-color: var(--surface-raised);
+		color: var(--text);
+		font-weight: 650;
 		cursor: pointer;
-		transition: background-color 0.2s;
+		transition:
+			color 0.2s ease,
+			background-color 0.2s ease,
+			border-color 0.2s ease;
 	}
 
 	button[type="submit"]:hover {
-		background-color: #3f3f46;
+		border-color: var(--control-border-hover);
+		background-color: var(--surface-hover);
 	}
 
 	.result-container {
@@ -220,89 +395,193 @@ if (result) {
 	}
 
 	.status-box {
-		padding: 16px;
-		border-radius: 8px;
+		padding: 20px;
 		border: 1px solid;
+		border-radius: 8px;
 	}
 
 	.success {
-		border-color: rgba(6, 78, 59, 0.5);
-		background-color: rgba(2, 44, 34, 0.2);
+		border-color: var(--success-border);
+		background-color: var(--success-bg);
 	}
 
 	.success .status-title {
-		color: #4ade80;
+		color: var(--success-text);
 	}
 
 	.error {
-		border-color: rgba(127, 29, 29, 0.5);
-		background-color: rgba(69, 10, 10, 0.2);
+		border-color: var(--error-border);
+		background-color: var(--error-bg);
 	}
 
 	.error .status-title {
-		color: #f87171;
+		color: var(--error-text);
 	}
 
 	.neutral {
-		border-color: #27272a;
-		background-color: rgba(24, 24, 27, 0.3);
+		border-color: var(--neutral-border);
+		background-color: var(--neutral-bg);
 	}
 
 	.neutral .status-title {
-		color: #a1a1aa;
+		color: var(--neutral-text);
 	}
 
 	.status-title {
-		font-size: 0.875rem;
-		font-weight: 500;
-		margin: 0;
-	}
-
-	.status-mechanism {
-		font-size: 0.875rem;
-		margin: 4px 0 0 0;
-		opacity: 0.7;
-	}
-
-	.versions {
-		margin-top: 8px;
-		font-size: 0.75rem;
-		font-family: monospace;
 		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		opacity: 0.8;
+		align-items: center;
+		gap: 8px;
+		margin: 0;
+		font-size: 1.125rem;
+		font-weight: 700;
+		letter-spacing: 0;
+	}
+
+	.detection-result + .detection-result {
+		margin-top: 20px;
+		padding-top: 20px;
+		border-top: 1px solid var(--success-border);
+	}
+
+	.status-icon {
+		flex: 0 0 auto;
+		font-size: 1.25em;
+	}
+
+	.result-details {
+		display: grid;
+		gap: 12px;
+		margin: 16px 0 0;
+		font-size: 0.875rem;
+	}
+
+	.result-details div {
+		display: grid;
+		gap: 3px;
+	}
+
+	.result-details dt {
+		color: var(--status-label);
+		font-size: 0.75rem;
+		font-weight: 650;
+		text-transform: uppercase;
+	}
+
+	.result-details dd {
+		margin: 0 0 0 12px;
+		color: var(--status-value);
+		line-height: 1.45;
 	}
 
 	.copy-link {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
 		width: 100%;
-		background: none;
-		border: none;
-		color: #71717a;
-		font-size: 0.75rem;
-		padding: 8px;
+		min-height: 44px;
+		margin-top: 14px;
+		padding: 10px 12px;
+		border: 1px solid var(--control-border);
+		border-radius: 6px;
+		background-color: var(--surface-raised);
+		color: var(--text-muted);
+		font-size: 0.8125rem;
+		font-weight: 600;
 		cursor: pointer;
-		margin-top: 16px;
+		transition:
+			color 0.2s ease,
+			border-color 0.2s ease,
+			background-color 0.2s ease;
 	}
 
 	.copy-link:hover {
-		color: #d4d4d8;
+		border-color: var(--control-border-hover);
+		background-color: var(--surface-hover);
+		color: var(--text);
+	}
+
+	.copy-icon {
+		display: inline-flex;
+		flex: 0 0 auto;
+		font-size: 1.25rem;
+	}
+
+	.copy-icon svg {
+		display: block;
+	}
+
+	.copy-icon[hidden] {
+		display: none;
+	}
+
+	.animate-check use {
+		animation: draw-check 0.6s ease forwards;
+		stroke-dashoffset: 26;
+	}
+
+	@keyframes draw-check {
+		to {
+			stroke-dashoffset: 0;
+		}
+	}
+
+	.copy-status {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
 	}
 
 	footer {
-		margin-top: 40px;
-		padding-top: 24px;
-		border-top: 1px solid rgba(39, 39, 42, 0.5);
-		text-align: center;
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		align-items: center;
+		margin-top: 28px;
+		padding-top: 20px;
+		border-top: 1px solid var(--border);
+		color: var(--text-muted);
 	}
 
 	footer a {
-		color: #71717a;
-		font-size: 0.75rem;
-		text-decoration: none;
+		color: var(--footer-link);
+		font-size: 0.8125rem;
+		font-weight: 550;
+		text-align: center;
+		text-decoration: underline;
+		text-underline-offset: 3px;
 	}
 
 	footer a:hover {
-		color: #d4d4d8;
+		color: var(--text);
+		text-decoration: underline;
+	}
+
+	:where(a, button, input):focus-visible {
+		outline: 3px solid var(--focus);
+		outline-offset: 3px;
+	}
+
+	@media (max-width: 420px) {
+		.site-panel {
+			padding: 24px 20px;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		button[type="submit"],
+		.copy-link {
+			transition: none;
+		}
+
+		.animate-check use {
+			animation: none;
+			stroke-dashoffset: 0;
+		}
 	}
 </style>

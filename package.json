@@ -8,14 +8,15 @@
 		"build": "astro check && astro build",
 		"preview": "astro preview",
 		"check": "astro check",
+		"generate-openapi": "node scripts/generate-openapi.mjs",
 		"lint": "eslint .",
 		"format": "prettier -w --cache .",
 		"test": "tsx --test src/lib/test/index.ts"
 	},
 	"dependencies": {
-		"@astrojs/cloudflare": "^12.2.1",
+		"@astrojs/cloudflare": "12.6.13",
 		"@types/node": "^22.13.4",
-		"astro": "^5.3.0"
+		"astro": "5.18.2"
 	},
 	"devDependencies": {
 		"@astrojs/check": "^0.9.4",
@@ -34,5 +35,5 @@
 		"typescript": "^5.7.3",
 		"typescript-eslint": "^8.20.0"
 	},
-	"packageManager": "pnpm@9.15.0+sha512.76e2379760a4328ec4415815bcd6628dee727af3779aaa4c914e3944156c4299921a89f976381ee107d41f12cfa4b66681ca9c718f0668fa0831ed4c6d8ba56c"
+	"packageManager": "pnpm@11.12.0+sha512.820a6fbd0d9f04c226638002aead1e45340a9139dd5dc077c1d83ef44aa2481c8eb6637b4c9aa696a3c7e35ba818e49cf27213e5f2b91138d09b7a3e26e898ba"
 }
