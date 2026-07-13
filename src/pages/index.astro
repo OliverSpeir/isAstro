@@ -7,6 +7,7 @@ import {
 	addProtocolToUrlAndTrim,
 	CustomError,
 } from "@lib/modules/server";
+
 let title = "isAstro";
 let description = "Check if a website is built with Astro";
 let result = null;
@@ -62,8 +63,8 @@ if (result) {
 	<main>
 		<div class="glass-card">
 			<header>
-				<h1>isAstro</h1>
-				<p class="subtitle">
+				<h1 id="page-title">isAstro</h1>
+				<p class="subtitle" id="page-subtitle">
 					Detect if a site is powered by
 					<a href="https://astro.build/">Astro</a>
 				</p>
@@ -73,8 +74,11 @@ if (result) {
 				<input
 					type="url"
 					name="url"
+					aria-label="Website URL"
+					aria-describedby="page-title page-subtitle"
 					placeholder="https://example.com"
 					required
+					autofocus
 					value={urlParam || ""}
 				/>
 				<button type="submit">Check Website</button>
