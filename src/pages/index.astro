@@ -1,24 +1,25 @@
 ---
 export const prerender = false;
 import Layout from "@layouts/DefaultPage.astro";
-import type { DetectionResult } from "@lib/modules/server";
+import type { DetectionResult, InfrastructureProvider } from "@lib/modules/server";
 import { checkWebsiteInput } from "@lib/modules/server/request";
+import { providerIconIds } from "@lib/provider-icons";
 
 let title = "isAstro";
 let description = "Check if a website is built with Astro";
 let result: DetectionResult | null = null;
 let checkingError = false;
 let inputError: string | null = null;
-const hasUrlParam = Astro.url.searchParams.has("url");
-const urlParam = Astro.url.searchParams.get("url") ?? "";
+const hasUrlParam = Astro.url.searchParams.has("site") || Astro.url.searchParams.has("url");
+const urlParam = Astro.url.searchParams.get("site") ?? Astro.url.searchParams.get("url") ?? "";
 
 if (Astro.request.method === "POST") {
 	const formData = await Astro.request.formData();
 	const urlValue = formData.get("url");
 	if (typeof urlValue === "string") {
-		return Astro.redirect(`?url=${encodeURIComponent(urlValue.trim())}`);
+		return Astro.redirect(`?site=${encodeURIComponent(urlValue.trim())}`);
 	}
-	return Astro.redirect("?url=");
+	return Astro.redirect("?site=");
 }
 
 if (hasUrlParam) {
@@ -54,7 +55,22 @@ if (result) {
 	const displayUrl = result.url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
 	const status = checkingError ? "Not Sure" : result.isAstro ? "Probably" : "Probably not";
 	title = `is ${displayUrl} Astro? ${status}`;
-	description = `${result.mechanism}${result.astroVersion ? ` Astro Version: ${result.astroVersion}` : ""}${result.starlightVersion ? ` Starlight Version: ${result.starlightVersion}` : ""}`;
+	const descriptionParts = [
+		result.mechanism,
+		result.astroVersion ? `Astro ${result.astroVersion}` : undefined,
+		result.starlightVersion ? `Starlight ${result.starlightVersion}` : undefined,
+		...(result.infrastructure ?? []).map(
+			(provider) =>
+				`${provider.layer === "edge" ? "Edge" : "Host"}: ${provider.name}${provider.confidence === "likely" ? " (likely)" : ""}`,
+		),
+		result.showcase
+			? `Astro Showcase: ${result.showcase.listed ? "listed" : "not listed"}`
+			: undefined,
+		result.starlightShowcase
+			? `Starlight Showcase: ${result.starlightShowcase.listed ? "listed" : "not listed"}`
+			: undefined,
+	].filter((part): part is string => Boolean(part));
+	description = descriptionParts.join(" · ");
 }
 
 function generatorEvidence(name: "Astro" | "Starlight", version?: string): string {
@@ -76,6 +92,24 @@ const astroResultEvidence = result ? astroEvidence(result) : "";
 const starlightResultEvidence = result
 	? generatorEvidence("Starlight", result.starlightVersion)
 	: "";
+const infrastructure = result?.isAstro ? (result.infrastructure ?? []) : [];
+const showcaseStatus = result?.isAstro ? result.showcase : undefined;
+const starlightShowcaseStatus = result?.isStarlight ? result.starlightShowcase : undefined;
+const astroShowcaseDiscussion =
+	"https://github.com/withastro/roadmap/discussions/521#new_comment_field";
+const starlightShowcaseInstructions =
+	"https://github.com/withastro/starlight/blob/main/CONTRIBUTING.md#sites";
+function iconForProvider(name: string): string {
+	return providerIconIds[name] ?? "server";
+}
+
+	function infrastructureEvidence(evidence: string): string {
+		return evidence.replace(" response header", " header");
+	}
+
+	function showLikelyLabel(provider: InfrastructureProvider): boolean {
+		return provider.confidence === "likely" && !provider.evidence.endsWith(" response header");
+	}
 ---
 
 <Layout {title} {description}>
@@ -90,11 +124,42 @@ const starlightResultEvidence = result
 				stroke-width="2"
 				d="M5 11l6 6l10 -10"></path>
 		</symbol>
+		<symbol id="x-icon" viewBox="0 0 24 24">
+			<path
+				fill="none"
+				stroke="currentColor"
+				stroke-linecap="round"
+				stroke-width="2"
+				d="M6 6l12 12M18 6L6 18"></path>
+		</symbol>
+		<symbol id="external-link-icon" viewBox="0 0 24 24">
+			<path
+				fill="none"
+				stroke="currentColor"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				stroke-width="1.5"
+				d="M14 5h5v5m0-5l-9 9m7-1v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h5"
+			/>
+		</symbol>
+		<symbol id="infrastructure-icon" viewBox="0 0 24 24">
+			<path
+				fill="currentColor"
+				d="M6 7.5a1 1 0 1 1 2 0a1 1 0 0 1-2 0m3 0a1 1 0 1 1 2 0a1 1 0 0 1-2 0m-2 6a1 1 0 1 0 0 2a1 1 0 0 0 0-2m3 0a1 1 0 1 0 0 2a1 1 0 0 0 0-2"
+			></path>
+			<path
+				fill="currentColor"
+				fill-rule="evenodd"
+				d="M5.947 3.25A2.75 2.75 0 0 0 3.197 6v3c0 .788.332 1.499.863 2a2.74 2.74 0 0 0-.863 2v3a2.75 2.75 0 0 0 2.75 2.75h5.303v1.5H5a.75.75 0 0 0 0 1.5h14a.75.75 0 0 0 0-1.5h-6.25v-1.5h5.197a2.75 2.75 0 0 0 2.75-2.75v-3c0-.788-.331-1.499-.862-2a2.74 2.74 0 0 0 .862-2V6a2.75 2.75 0 0 0-2.75-2.75zm0 7h12c.69 0 1.25-.56 1.25-1.25V6c0-.69-.56-1.25-1.25-1.25h-12c-.69 0-1.25.56-1.25 1.25v3c0 .69.56 1.25 1.25 1.25m0 1.5c-.69 0-1.25.56-1.25 1.25v3c0 .69.56 1.25 1.25 1.25h12c.69 0 1.25-.56 1.25-1.25v-3c0-.69-.56-1.25-1.25-1.25z"
+				clip-rule="evenodd"></path>
+		</symbol>
 	</svg>
-	<main>
-		<div class="site-panel">
+	<main class:list={{ "has-result-page": Boolean(result) }}>
+		<div class:list={["site-panel", { "has-result": Boolean(result) }]}>
 			<header>
-				<h1>isAstro</h1>
+				<h1>
+					{result ? <a class="home-link" href="/">isAstro</a> : "isAstro"}
+				</h1>
 				<p class="subtitle">
 					Detect if a site is powered by <a href="https://astro.build/">Astro</a>
 				</p>
@@ -125,29 +190,24 @@ const starlightResultEvidence = result
 						</p>
 					)
 				}
-				<button type="submit">Check Website</button>
+				<button type="submit">{result ? "Check" : "Check Website"}</button>
 			</form>
 
 			{
 				result && (
 					<section class="result-container" aria-labelledby="result-title">
 						<div
-							class={`status-box ${checkingError ? "error" : result.isAstro ? "success" : "neutral"}`}
+							class={`status-box ${checkingError ? "error" : result.isAstro ? "success" : "not-astro"}`}
 						>
 							<div class="detection-result">
 								<h2 id="result-title" class="status-title">
-									{result.isAstro && (
-										<svg
-											class="status-icon animate-check"
-											xmlns="http://www.w3.org/2000/svg"
-											width="1em"
-											height="1em"
-											viewBox="0 0 24 24"
-											aria-hidden="true"
-										>
-											<use href="#checkmark-icon" />
+									{result.isAstro ? (
+										<img class="status-icon framework-icon" src="/astro.svg" alt="" />
+									) : !checkingError ? (
+										<svg class="status-icon negative-icon" viewBox="0 0 24 24" aria-hidden="true">
+											<use href="#x-icon" />
 										</svg>
-									)}
+									) : null}
 									{result.isAstro
 										? "Astro Detected"
 										: checkingError
@@ -159,22 +219,41 @@ const starlightResultEvidence = result
 										<dt>Evidence:</dt>
 										<dd>{astroResultEvidence}</dd>
 									</div>
+									{result.isAstro && (
+										<div>
+											<dt>Showcase:</dt>
+											<dd>
+												{showcaseStatus ? (
+													showcaseStatus.listed ? (
+														<span title={showcaseStatus.title}>Listed</span>
+													) : (
+														<span class="showcase-not-listed">
+															Not listed -
+															<a
+																class="inline-action"
+																href={astroShowcaseDiscussion}
+																aria-label="Add this site to the Astro Showcase"
+															>
+																<span>Add it</span>
+																<svg class="outbound-icon" aria-hidden="true">
+																	<use href="#external-link-icon" />
+																</svg>
+															</a>
+														</span>
+													)
+												) : (
+													"Unsure"
+												)}
+											</dd>
+										</div>
+									)}
 								</dl>
 							</div>
 
 							{result.isStarlight && (
 								<div class="detection-result">
 									<h3 class="status-title">
-										<svg
-											class="status-icon animate-check"
-											xmlns="http://www.w3.org/2000/svg"
-											width="1em"
-											height="1em"
-											viewBox="0 0 24 24"
-											aria-hidden="true"
-										>
-											<use href="#checkmark-icon" />
-										</svg>
+										<img class="status-icon framework-icon" src="/starlight.svg" alt="" />
 										Starlight Detected
 									</h3>
 									<dl class="result-details">
@@ -182,11 +261,82 @@ const starlightResultEvidence = result
 											<dt>Evidence:</dt>
 											<dd>{starlightResultEvidence}</dd>
 										</div>
+										<div>
+											<dt>Showcase:</dt>
+											<dd>
+												{starlightShowcaseStatus ? (
+													starlightShowcaseStatus.listed ? (
+														<span title={starlightShowcaseStatus.title}>Listed</span>
+													) : (
+														<span class="showcase-not-listed">
+															Not listed -
+															<a
+																class="inline-action"
+																href={starlightShowcaseInstructions}
+																aria-label="Add this site to the Starlight Showcase"
+															>
+																<span>Add it</span>
+																<svg class="outbound-icon" aria-hidden="true">
+																	<use href="#external-link-icon" />
+																</svg>
+															</a>
+														</span>
+													)
+												) : (
+													"Unsure"
+												)}
+											</dd>
+										</div>
 									</dl>
 								</div>
 							)}
+
+							{result.isAstro && (
+								<div class="detection-result">
+									<h3 class="status-title">
+										<svg class="status-icon" viewBox="0 0 24 24" aria-hidden="true">
+											<use href="#infrastructure-icon" />
+										</svg>
+										Infrastructure
+									</h3>
+									<dl class="result-details infrastructure-details">
+									{(["edge", "hosting"] as const).map((layer) => {
+										const providers = infrastructure.filter((provider) => provider.layer === layer);
+										if (providers.length === 0) {
+											return (
+												<div>
+													<dt>{layer === "edge" ? "Edge:" : "Host:"}</dt>
+													<dd>Unsure</dd>
+												</div>
+											);
+										}
+										return providers.map((provider) => (
+											<div>
+												<dt>{layer === "edge" ? "Edge:" : "Host:"}</dt>
+												<dd class="provider-detail">
+													<span class="provider-mark" aria-hidden="true">
+														<svg viewBox="0 0 24 24">
+															<use href={`/provider-icons.svg#${iconForProvider(provider.name)}`} />
+														</svg>
+													</span>
+													<span
+														class="provider-copy"
+														title={provider.confidence === "likely" ? `Evidence: ${provider.evidence}` : undefined}
+													>
+															<strong>{`${provider.name}:`}</strong>
+															{` ${infrastructureEvidence(provider.evidence)}`}
+															{showLikelyLabel(provider) ? " · likely" : ""}
+														</span>
+												</dd>
+											</div>
+										));
+									})}
+								</dl>
+							</div>
+						)}
 						</div>
 
+						<div class="result-actions">
 						<button id="copyButton" type="button" class="copy-link">
 							<span id="copyIcon" class="copy-icon" aria-hidden="true">
 								<svg
@@ -218,8 +368,18 @@ const starlightResultEvidence = result
 									<use href="#checkmark-icon" />
 								</svg>
 							</span>
-							<span id="copyButtonText">Copy this URL to share results</span>
+							<span id="copyButtonText">Copy result link</span>
 						</button>
+							<a
+								class="visit-link"
+								href={result.lastFetchedUrl}
+							>
+								Visit site
+								<svg class="outbound-icon" aria-hidden="true">
+									<use href="#external-link-icon" />
+								</svg>
+							</a>
+						</div>
 						<p
 							id="copyStatus"
 							class="copy-status"
@@ -233,6 +393,7 @@ const starlightResultEvidence = result
 
 			<footer>
 				<a href="https://github.com/OliverSpeir/isAstro">Source Code</a>
+				<a href="/showcase">Search Showcase</a>
 				<a href={apiHref}>JSON API</a>
 			</footer>
 		</div>
@@ -247,7 +408,7 @@ const starlightResultEvidence = result
 		let resetTimer: ReturnType<typeof setTimeout> | undefined;
 		const resetCopyState = () => {
 			if (!copyButtonText || !copyIcon || !copiedIcon || !copyStatus) return;
-			copyButtonText.textContent = "Copy this URL to share results";
+			copyButtonText.textContent = "Copy result link";
 			copyIcon.hidden = false;
 			copiedIcon.hidden = true;
 			copiedIcon.classList.remove("animate-check");
@@ -282,6 +443,7 @@ const starlightResultEvidence = result
 				resetTimer = setTimeout(resetCopyState, 3000);
 			}
 		});
+
 	</script>
 </Layout>
 
@@ -299,21 +461,30 @@ const starlightResultEvidence = result
 		padding: 24px 16px;
 	}
 
+	main.has-result-page {
+		padding-block: 8px;
+	}
+
 	.site-panel {
-		padding: 32px;
+		padding: 24px 32px 32px;
 		border: 1px solid var(--border);
 		border-radius: 8px;
 		background-color: var(--surface);
 		box-shadow: var(--shadow);
 	}
 
+	.site-panel.has-result {
+		padding-top: 18px;
+		padding-bottom: 20px;
+	}
+
 	header {
-		margin-bottom: 32px;
+		margin-bottom: 24px;
 		text-align: center;
 	}
 
 	h1 {
-		margin: 0 0 8px;
+		margin: 0 0 4px;
 		font-size: 1.875rem;
 		font-weight: 700;
 		letter-spacing: 0;
@@ -325,15 +496,93 @@ const starlightResultEvidence = result
 		font-size: 0.875rem;
 	}
 
+	.has-result header {
+		margin-bottom: 14px;
+	}
+
+	.has-result h1 {
+		margin: 0;
+		font-size: 1.375rem;
+	}
+
 	a {
 		color: var(--link);
-		text-underline-offset: 3px;
+	}
+
+	a:not(.home-link, .visit-link) {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		width: max-content;
+		text-decoration: none;
+	}
+
+	a:not(.home-link, .visit-link)::after {
+		position: absolute;
+		right: 0;
+		bottom: 0.15em;
+		left: 0;
+		height: 1px;
+		background: currentColor;
+		content: "";
+	}
+
+	.inline-action {
+		gap: 4px;
+	}
+
+	.showcase-not-listed {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.outbound-icon {
+		flex: 0 0 auto;
+		width: 1em;
+		height: 1em;
+	}
+
+	.home-link,
+	.home-link:hover {
+		color: inherit;
+		text-decoration: none;
 	}
 
 	form {
 		display: flex;
 		flex-direction: column;
 		gap: 12px;
+	}
+
+	.has-result form {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 8px;
+	}
+
+	.has-result form > label {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
+	}
+
+	.has-result form > input {
+		grid-column: 1;
+		grid-row: 1;
+	}
+
+	.has-result form > button[type="submit"] {
+		grid-column: 2;
+		grid-row: 1;
+		width: auto;
+		padding-inline: 18px;
 	}
 
 	label {
@@ -394,6 +643,10 @@ const starlightResultEvidence = result
 		margin-top: 24px;
 	}
 
+	.has-result .result-container {
+		margin-top: 16px;
+	}
+
 	.status-box {
 		padding: 20px;
 		border: 1px solid;
@@ -418,6 +671,15 @@ const starlightResultEvidence = result
 		color: var(--error-text);
 	}
 
+	.not-astro {
+		border-color: var(--error-border);
+		background-color: var(--error-bg);
+	}
+
+	.not-astro .status-title {
+		color: var(--error-text);
+	}
+
 	.neutral {
 		border-color: var(--neutral-border);
 		background-color: var(--neutral-bg);
@@ -438,14 +700,20 @@ const starlightResultEvidence = result
 	}
 
 	.detection-result + .detection-result {
-		margin-top: 20px;
-		padding-top: 20px;
+		margin-top: 12px;
+		padding-top: 12px;
 		border-top: 1px solid var(--success-border);
 	}
 
 	.status-icon {
 		flex: 0 0 auto;
+		width: 1.25em;
+		height: 1.25em;
 		font-size: 1.25em;
+	}
+
+	.framework-icon {
+		object-fit: contain;
 	}
 
 	.result-details {
@@ -473,14 +741,54 @@ const starlightResultEvidence = result
 		line-height: 1.45;
 	}
 
-	.copy-link {
+	.provider-detail {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+	}
+
+	.provider-mark {
+		display: grid;
+		flex: 0 0 auto;
+		width: 20px;
+		height: 20px;
+		place-items: center;
+		color: #27272a;
+	}
+
+	.provider-mark svg {
+		display: block;
+		width: 14px;
+		height: 14px;
+	}
+
+	.provider-mark-generic {
+		color: var(--status-label);
+	}
+
+	.provider-copy {
+		min-width: 0;
+	}
+
+	.provider-detail strong {
+		font-weight: 650;
+	}
+
+	.result-actions {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 8px;
+		margin-top: 14px;
+	}
+
+	.copy-link,
+	.visit-link {
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		gap: 8px;
 		width: 100%;
 		min-height: 44px;
-		margin-top: 14px;
 		padding: 10px 12px;
 		border: 1px solid var(--control-border);
 		border-radius: 6px;
@@ -489,16 +797,23 @@ const starlightResultEvidence = result
 		font-size: 0.8125rem;
 		font-weight: 600;
 		cursor: pointer;
+		text-decoration: none;
 		transition:
 			color 0.2s ease,
 			border-color 0.2s ease,
 			background-color 0.2s ease;
 	}
 
-	.copy-link:hover {
+	.copy-link:hover,
+	.visit-link:hover {
 		border-color: var(--control-border-hover);
 		background-color: var(--surface-hover);
 		color: var(--text);
+	}
+
+	.visit-link .outbound-icon {
+		width: 1.25rem;
+		height: 1.25rem;
 	}
 
 	.copy-icon {
@@ -540,7 +855,7 @@ const starlightResultEvidence = result
 
 	footer {
 		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
+		grid-template-columns: repeat(3, minmax(0, 1fr));
 		align-items: center;
 		margin-top: 28px;
 		padding-top: 20px;
@@ -548,18 +863,23 @@ const starlightResultEvidence = result
 		color: var(--text-muted);
 	}
 
+	.has-result footer {
+		margin-top: 14px;
+		padding-top: 10px;
+	}
+
 	footer a {
+		justify-self: center;
 		color: var(--footer-link);
 		font-size: 0.8125rem;
 		font-weight: 550;
 		text-align: center;
-		text-decoration: underline;
-		text-underline-offset: 3px;
+		text-decoration: none;
 	}
 
 	footer a:hover {
 		color: var(--text);
-		text-decoration: underline;
+		text-decoration: none;
 	}
 
 	:where(a, button, input):focus-visible {
@@ -570,6 +890,28 @@ const starlightResultEvidence = result
 	@media (max-width: 420px) {
 		.site-panel {
 			padding: 24px 20px;
+		}
+
+		.site-panel.has-result {
+			padding-top: 18px;
+		}
+
+		.has-result form {
+			grid-template-columns: 1fr;
+		}
+
+		.has-result form > input,
+		.has-result form > button[type="submit"] {
+			grid-column: 1;
+			width: 100%;
+		}
+
+		.has-result form > input {
+			grid-row: 1;
+		}
+
+		.has-result form > button[type="submit"] {
+			grid-row: 2;
 		}
 	}
 

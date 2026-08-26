@@ -5,8 +5,23 @@ import {
 	type DetectionResult,
 } from "./index";
 import { addProtocolToUrlAndTrim, isValidUrl } from "./utils";
+import { getShowcaseStatus } from "@lib/showcase";
+import { getStarlightShowcaseStatus } from "@lib/starlight-showcase";
+import {
+	detectDnsInfrastructure,
+	sortInfrastructureProviders,
+	type InfrastructureProvider,
+} from "./hosting";
 
 export type WebsiteCheckFailureKind = "empty" | "invalid" | "request";
+
+export type WebsiteCheckOptions = CachedDetectionOptions & {
+	includeShowcase?: boolean;
+	showcaseFetch?: typeof globalThis.fetch;
+	starlightShowcaseFetch?: typeof globalThis.fetch;
+	includeDnsInfrastructure?: boolean;
+	dnsFetch?: typeof globalThis.fetch;
+};
 
 export type WebsiteCheckResult =
 	| {
@@ -42,12 +57,14 @@ export function normalizeWebsiteUrl(
 		};
 	}
 
-	return { ok: true, url: new URL(candidate).toString() };
+	const url = new URL(candidate);
+	url.hash = "";
+	return { ok: true, url: url.toString() };
 }
 
 export async function checkWebsiteInput(
 	input: string,
-	options: CachedDetectionOptions = {},
+	options: WebsiteCheckOptions = {},
 ): Promise<WebsiteCheckResult> {
 	const normalized = normalizeWebsiteUrl(input);
 	if (!normalized.ok) {
@@ -60,10 +77,61 @@ export async function checkWebsiteInput(
 	}
 
 	try {
+		const {
+			includeShowcase = true,
+			showcaseFetch,
+			starlightShowcaseFetch,
+			includeDnsInfrastructure = true,
+			dnsFetch,
+			...detectionOptions
+		} = options;
+		const result = await getCachedAstroDetection(normalized.url, detectionOptions);
+		if (result.isAstro) {
+			const targets = [result.lastFetchedUrl];
+			const knownInfrastructureLayers = new Set(
+				result.infrastructure?.map((provider) => provider.layer) ?? [],
+			);
+			const hasCompleteInfrastructure =
+				knownInfrastructureLayers.has("edge") && knownInfrastructureLayers.has("hosting");
+			const [astroShowcase, starlightShowcase, dnsInfrastructure] = await Promise.allSettled([
+				includeShowcase
+					? getShowcaseStatus(targets, showcaseFetch)
+					: Promise.resolve(undefined),
+				includeShowcase && result.isStarlight
+					? getStarlightShowcaseStatus(targets, starlightShowcaseFetch)
+					: Promise.resolve(undefined),
+				includeDnsInfrastructure && !hasCompleteInfrastructure
+					? detectDnsInfrastructure(result.lastFetchedUrl, dnsFetch)
+					: Promise.resolve([] as InfrastructureProvider[]),
+			]);
+
+			const dnsProviders =
+				dnsInfrastructure.status === "fulfilled"
+					? dnsInfrastructure.value.filter(
+							(provider) => !knownInfrastructureLayers.has(provider.layer),
+						)
+					: [];
+			const infrastructure = sortInfrastructureProviders([
+				...(result.infrastructure ?? []),
+				...dnsProviders,
+			]);
+			return {
+				ok: true,
+				normalizedUrl: normalized.url,
+				result: {
+					...result,
+					...(infrastructure.length > 0 && { infrastructure }),
+					...(astroShowcase.status === "fulfilled" &&
+						astroShowcase.value && { showcase: astroShowcase.value }),
+					...(starlightShowcase.status === "fulfilled" &&
+						starlightShowcase.value && { starlightShowcase: starlightShowcase.value }),
+				},
+			};
+		}
 		return {
 			ok: true,
 			normalizedUrl: normalized.url,
-			result: await getCachedAstroDetection(normalized.url, options),
+			result,
 		};
 	} catch (error) {
 		if (error instanceof CustomError) {

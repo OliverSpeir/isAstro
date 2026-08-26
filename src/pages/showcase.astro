@@ -1,0 +1,275 @@
+---
+import Layout from "@layouts/DefaultPage.astro";
+
+const title = "Astro Showcase Search | isAstro";
+const description = "Quickly search sites listed in the official Astro showcase.";
+---
+
+<Layout {title} {description}>
+	<main>
+		<div class="showcase-panel">
+			<header>
+				<h1>Showcase</h1>
+				<p>Search the official Astro showcase.</p>
+			</header>
+
+			<div class="search-field">
+				<label for="showcase-search">Site or domain</label>
+				<input
+					id="showcase-search"
+					type="search"
+					autocomplete="off"
+					autocapitalize="none"
+					spellcheck="false"
+					disabled
+				/>
+			</div>
+
+			<p id="showcase-status" class="search-status" role="status" aria-live="polite">
+				Loading showcase…
+			</p>
+			<ul id="showcase-results" class="search-results" aria-label="Showcase results"></ul>
+
+			<footer>
+				<a href="/">isAstro</a>
+				<a href="https://astro.build/showcase/">Official showcase</a>
+			</footer>
+		</div>
+	</main>
+
+	<script>
+		type ShowcaseSite = { title: string; url: string; slug: string };
+		type SearchableSite = ShowcaseSite & { hostname: string; searchText: string };
+
+		const input = document.getElementById("showcase-search") as HTMLInputElement | null;
+		const status = document.getElementById("showcase-status");
+		const results = document.getElementById("showcase-results");
+		let sites: SearchableSite[] = [];
+
+			function searchableSite(site: ShowcaseSite): SearchableSite | undefined {
+				try {
+					const url = new URL(site.url);
+					if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname) {
+						return undefined;
+					}
+					const hostname = url.hostname.replace(/^www\./, "");
+				return {
+					...site,
+					hostname,
+					searchText: `${site.title} ${hostname} ${site.url}`.toLocaleLowerCase(),
+				};
+			} catch {
+				return undefined;
+			}
+		}
+
+		function updateQuery(query: string): void {
+			const url = new URL(window.location.href);
+			if (query) url.searchParams.set("q", query);
+			else url.searchParams.delete("q");
+			window.history.replaceState(null, "", url);
+		}
+
+		function render(): void {
+			if (!input || !status || !results) return;
+			const query = input.value.trim().toLocaleLowerCase();
+			updateQuery(query);
+			results.replaceChildren();
+
+			if (!query) {
+				status.textContent = `${sites.length.toLocaleString()} sites. Type to search.`;
+				return;
+			}
+
+			const matches = sites
+				.filter((site) => site.searchText.includes(query))
+				.sort((left, right) => {
+					const leftStarts =
+						left.hostname.startsWith(query) || left.title.toLocaleLowerCase().startsWith(query);
+					const rightStarts =
+						right.hostname.startsWith(query) || right.title.toLocaleLowerCase().startsWith(query);
+					return Number(rightStarts) - Number(leftStarts);
+				})
+				.slice(0, 24);
+
+			status.textContent = matches.length
+				? `${matches.length}${matches.length === 24 ? "+" : ""} result${matches.length === 1 ? "" : "s"}`
+				: "No showcase matches";
+
+			for (const site of matches) {
+				const item = document.createElement("li");
+				const link = document.createElement("a");
+				const name = document.createElement("strong");
+				const hostname = document.createElement("span");
+				link.href = site.url;
+				link.rel = "noopener noreferrer";
+				name.textContent = site.title;
+				hostname.textContent = site.hostname;
+				link.append(name, hostname);
+				item.append(link);
+				results.append(item);
+			}
+		}
+
+		input?.addEventListener("input", render);
+
+		async function loadShowcase(): Promise<void> {
+			if (!input || !status) return;
+			try {
+				const response = await fetch("/showcase.json");
+				if (!response.ok) throw new Error("Showcase request failed");
+				const value: unknown = await response.json();
+				if (!Array.isArray(value)) throw new Error("Invalid showcase response");
+				sites = value
+					.map((site) => searchableSite(site as ShowcaseSite))
+					.filter((site): site is SearchableSite => Boolean(site));
+				input.value = new URL(window.location.href).searchParams.get("q") ?? "";
+				input.disabled = false;
+				render();
+			} catch {
+				status.textContent = "Could not load the showcase.";
+				input.disabled = true;
+			}
+		}
+
+		void loadShowcase();
+	</script>
+</Layout>
+
+<style>
+	main {
+		width: 100%;
+		max-width: 620px;
+		padding: 24px 16px;
+	}
+
+	.showcase-panel {
+		padding: 24px 32px 28px;
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: var(--surface);
+		box-shadow: var(--shadow);
+	}
+
+	header {
+		margin-bottom: 24px;
+	}
+
+	h1 {
+		margin: 0 0 2px;
+		font-size: 1.75rem;
+		line-height: 1.2;
+	}
+
+	header p,
+	.search-status {
+		margin: 0;
+		color: var(--text-muted);
+		font-size: 0.8125rem;
+	}
+
+	.search-field {
+		display: grid;
+		gap: 7px;
+	}
+
+	label {
+		font-size: 0.8125rem;
+		font-weight: 650;
+	}
+
+	input {
+		width: 100%;
+		min-height: 42px;
+		padding: 9px 11px;
+		border: 1px solid var(--control-border);
+		border-radius: 6px;
+		background: var(--control-bg);
+		color: var(--text);
+		font: inherit;
+	}
+
+	input:focus {
+		border-color: var(--control-border-hover);
+	}
+
+	input:focus-visible,
+	a:focus-visible {
+		outline: 3px solid var(--focus);
+		outline-offset: 3px;
+	}
+
+	.search-status {
+		min-height: 1.25rem;
+		margin-top: 10px;
+	}
+
+	.search-results {
+		display: grid;
+		gap: 1px;
+		margin: 8px 0 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.search-results:empty {
+		display: none;
+	}
+
+	:global(.search-results a) {
+		display: grid;
+		gap: 3px;
+		padding: 10px 2px;
+		border-bottom: 1px solid var(--border);
+		color: var(--text);
+		text-decoration: none;
+	}
+
+	:global(.search-results li:last-child a) {
+		border-bottom: 0;
+	}
+
+	:global(.search-results a:hover strong) {
+		text-decoration: underline;
+		text-underline-offset: 3px;
+	}
+
+	:global(.search-results strong) {
+		overflow: hidden;
+		font-size: 0.875rem;
+		font-weight: 600;
+		line-height: 1.3;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	:global(.search-results span) {
+		overflow: hidden;
+		color: var(--text-muted);
+		font-size: 0.75rem;
+		line-height: 1.3;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	footer {
+		display: flex;
+		justify-content: space-between;
+		margin-top: 22px;
+		padding-top: 16px;
+		border-top: 1px solid var(--border);
+	}
+
+	footer a {
+		color: var(--footer-link);
+		font-size: 0.75rem;
+		font-weight: 550;
+		text-underline-offset: 3px;
+	}
+
+	@media (max-width: 420px) {
+		.showcase-panel {
+			padding: 22px 20px 24px;
+		}
+	}
+</style>

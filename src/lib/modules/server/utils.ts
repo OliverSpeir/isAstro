@@ -11,6 +11,12 @@ type ParsedMetaTag = {
 	httpEquiv: string | undefined;
 };
 
+type HtmlEvidenceSanitizer = {
+	write(text: string): string;
+};
+
+type EvidenceExcludedElement = "script" | "style" | "textarea" | "template" | "pre";
+
 const HTML_ATTRIBUTE_REGEX = /([^\s"'=<>`]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 
 /** Extracts complete HTML tags and retains only the final incomplete tag. */
@@ -48,6 +54,94 @@ export function consumeHtmlTags(fragment: string): { tags: string[]; remainder: 
 	}
 
 	return { tags, remainder: "" };
+}
+
+/**
+ * Keeps real tags and stylesheet text while discarding comments, ordinary text,
+ * and raw-text element contents that can contain HTML-looking examples.
+ */
+export function createHtmlEvidenceSanitizer(): HtmlEvidenceSanitizer {
+	let mode: "data" | "tag" | "comment" = "data";
+	let tagBuffer = "";
+	let quote: '"' | "'" | undefined;
+	let commentTail = "";
+	let excludedElement: EvidenceExcludedElement | undefined;
+	let excludedPending = "";
+
+	return {
+		write(text: string): string {
+			let source = excludedPending + text;
+			excludedPending = "";
+			let output = "";
+
+			while (source.length > 0) {
+				if (excludedElement) {
+					const closingPrefix = `</${excludedElement}`;
+					const closingIndex = source.toLowerCase().indexOf(closingPrefix);
+					if (closingIndex === -1) {
+						const retainedLength = Math.min(source.length, closingPrefix.length - 1);
+						const emittedLength = source.length - retainedLength;
+						if (excludedElement === "style") output += source.slice(0, emittedLength);
+						excludedPending = source.slice(emittedLength);
+						break;
+					}
+
+					if (excludedElement === "style") output += source.slice(0, closingIndex);
+					source = source.slice(closingIndex);
+					excludedElement = undefined;
+					mode = "data";
+					continue;
+				}
+
+				const character = source[0] ?? "";
+				source = source.slice(1);
+
+				if (mode === "comment") {
+					commentTail = (commentTail + character).slice(-3);
+					if (commentTail === "-->") {
+						mode = "data";
+						commentTail = "";
+					}
+					continue;
+				}
+
+				if (mode === "data") {
+					if (character === "<") {
+						mode = "tag";
+						tagBuffer = "<";
+						quote = undefined;
+					}
+					continue;
+				}
+
+				tagBuffer += character;
+				if (tagBuffer === "<!--") {
+					mode = "comment";
+					tagBuffer = "";
+					continue;
+				}
+				if (quote) {
+					if (character === quote) quote = undefined;
+					continue;
+				}
+				if (character === '"' || character === "'") {
+					quote = character;
+					continue;
+				}
+				if (character !== ">") continue;
+
+				output += tagBuffer;
+				const openingTag = /^<\s*(script|style|textarea|template|pre)(?:\s|\/?>)/i.exec(tagBuffer);
+				if (openingTag?.[1] && !/\/\s*>$/.test(tagBuffer)) {
+					excludedElement = openingTag[1].toLowerCase() as EvidenceExcludedElement;
+				}
+				tagBuffer = "";
+				mode = "data";
+			}
+
+			return output;
+		},
+	};
 }
 
 function parseMetaTag(tag: string): ParsedMetaTag | undefined {
@@ -370,9 +464,9 @@ export class CustomError extends Error {
 // Retained as public constants for callers using the older helper signatures.
 export const metaGeneratorRegex = /<meta\b[^>]*>/gi;
 export const metaRefreshRegex = /<meta\b[^>]*>/gi;
-export const astroDataAttrRegex = /data-astro-[a-zA-Z0-9-]+/i;
+export const astroDataAttrRegex = /<[^>]*\bdata-astro-[a-zA-Z0-9-]+/i;
 export const astroIslandRegex = /<astro-island\b/i;
-export const astroClassRegex = /class\s*=\s*["'][^"']*astro-/i;
+export const astroClassRegex = /<[^>]*\bclass\s*=\s*["'][^"']*astro-/i;
 export const astroAssetRegex =
 	/<(script|link|img|picture|meta[^>]*property\s*=\s*["']og:image["'])[^>]*_astro\//i;
 export const endOfHeadRegex = /<\/head>/i;

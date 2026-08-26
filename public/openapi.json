@@ -124,8 +124,90 @@
           },
           "starlightVersion": {
             "type": "string"
+          },
+          "infrastructure": {
+            "type": "array",
+            "description": "Edge and hosting providers detected for an Astro site. Inferred providers include a confidence field.",
+            "items": {
+              "$ref": "#/components/schemas/InfrastructureProvider"
+            }
+          },
+          "showcase": {
+            "$ref": "#/components/schemas/ShowcaseStatus"
+          },
+          "starlightShowcase": {
+            "$ref": "#/components/schemas/ShowcaseStatus"
           }
         }
+      },
+      "InfrastructureProvider": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "layer",
+          "evidence"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "layer": {
+            "type": "string",
+            "enum": [
+              "edge",
+              "hosting"
+            ]
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "likely"
+            ]
+          }
+        }
+      },
+      "ShowcaseStatus": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "listed"
+            ],
+            "properties": {
+              "listed": {
+                "type": "boolean",
+                "const": false
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "listed",
+              "title",
+              "url"
+            ],
+            "properties": {
+              "listed": {
+                "type": "boolean",
+                "const": true
+              },
+              "title": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string",
+                "format": "uri"
+              }
+            }
+          }
+        ]
       },
       "ApiError": {
         "type": "object",

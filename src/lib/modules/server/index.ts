@@ -6,6 +6,7 @@ import {
 	astroIslandRegex,
 	checkMetaRefresh,
 	consumeHtmlTags,
+	createHtmlEvidenceSanitizer,
 	CustomError,
 	endOfHeadRegex,
 	getAllAstroMarkers,
@@ -18,10 +19,14 @@ import {
 	styleAttrRegex,
 	styleWhereRegex,
 } from "./utils";
+import { detectInfrastructure, type InfrastructureProvider } from "./hosting";
+import type { ShowcaseStatus } from "@lib/showcase";
 
 export { addProtocolToUrlAndTrim, CustomError, isValidUrl };
+export { detectInfrastructure };
+export type { InfrastructureLayer, InfrastructureProvider } from "./hosting";
 
-export const DEFAULT_DETECTION_TIMEOUT_MS = 5_000;
+export const DEFAULT_DETECTION_TIMEOUT_MS = 8_000;
 export const DEFAULT_MAX_RESPONSE_BYTES = 1_000_000;
 export const DEFAULT_MAX_REDIRECTS = 3;
 export const DEFAULT_CACHE_TTL_MS = 5 * 60_000;
@@ -41,6 +46,9 @@ export type DetectionResult = {
 	mechanism: string;
 	astroVersion?: string;
 	starlightVersion?: string;
+	infrastructure?: InfrastructureProvider[];
+	showcase?: ShowcaseStatus;
+	starlightShowcase?: ShowcaseStatus;
 };
 
 export type DetectionOptions = {
@@ -123,6 +131,14 @@ function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): void {
 	void reader.cancel().catch(() => undefined);
 }
 
+function withInfrastructure(
+	result: DetectionResult,
+	infrastructure: InfrastructureProvider[],
+): DetectionResult {
+	if (!result.isAstro || infrastructure.length === 0) return result;
+	return { ...result, infrastructure };
+}
+
 function detectionResult(
 	originalUrl: string,
 	lastFetchedUrl: string,
@@ -166,7 +182,9 @@ function ensureValidTarget(value: string, originalUrl: string, lastFetchedUrl?: 
 	if (!isValidUrl(value)) {
 		throw new CustomError("Invalid or disallowed URL", originalUrl, lastFetchedUrl ?? value);
 	}
-	return new URL(value);
+	const target = new URL(value);
+	target.hash = "";
+	return target;
 }
 
 function resolveRedirect(
@@ -298,6 +316,7 @@ export async function isAstroWebsite(
 						lastFetchedUrl,
 					);
 				}
+				await response.body?.cancel().catch(() => undefined);
 				target = resolveRedirect(location, target, originalUrl, redirectsFollowed, maxRedirects);
 				redirectsFollowed++;
 				continue;
@@ -330,11 +349,14 @@ export async function isAstroWebsite(
 				);
 			}
 
+			const infrastructure = detectInfrastructure(response.headers, target);
 			const generator: GeneratorState = { astro: false, starlight: false };
 			const headScanner: MarkerScanner = { pending: "", markers: new Set() };
 			const bodyScanner: MarkerScanner = { pending: "", markers: new Set() };
 			const unclosedHeadScanner: MarkerScanner = { pending: "", markers: new Set() };
 			const decoder = new TextDecoder();
+			const evidenceSanitizer = createHtmlEvidenceSanitizer();
+			let responseBytes = 0;
 			let tagBuffer = "";
 			let phaseBuffer = "";
 			let challengeBuffer = "";
@@ -375,34 +397,44 @@ export async function isAstroWebsite(
 					"NO_HEAD_END",
 				);
 
-			const processText = (text: string): void => {
-				if (!text || metaRedirect || completedResult) return;
+			const processText = (rawText: string): void => {
+				if (!rawText || metaRedirect || completedResult) return;
 
 				if (totalBytes <= BOT_CHALLENGE_SCAN_LIMIT) {
-					challengeBuffer = (challengeBuffer + text).slice(-MARKER_SCAN_BATCH_SIZE);
+					challengeBuffer = (challengeBuffer + rawText).slice(-MARKER_SCAN_BATCH_SIZE);
 					if (isBotChallenge(challengeBuffer)) {
 						throw new CustomError("Bot challenge detected", originalUrl, lastFetchedUrl);
 					}
 				}
 
+				const text = evidenceSanitizer.write(rawText);
+				if (!text) return;
+
 				tagBuffer += text;
 				const consumed = consumeHtmlTags(tagBuffer);
 				tagBuffer = trimIncompleteTag(consumed.remainder);
+				let parsingHeadTags = readingHead;
 				for (const tag of consumed.tags) {
+					if (/^<\s*\/\s*head(?:\s|>)/i.test(tag)) {
+						parsingHeadTags = false;
+						continue;
+					}
 					const foundGenerator = parseGeneratorMetaTag(tag);
-					if (readingHead && foundGenerator?.astro) {
+					if (parsingHeadTags && foundGenerator?.astro) {
 						generator.astro = true;
 						if (foundGenerator.astroVersion) {
 							generator.astroVersion ??= foundGenerator.astroVersion;
 						}
 					}
-					if (readingHead && foundGenerator?.starlight) {
+					if (parsingHeadTags && foundGenerator?.starlight) {
 						generator.starlight = true;
 						if (foundGenerator.starlightVersion) {
 							generator.starlightVersion ??= foundGenerator.starlightVersion;
 						}
 					}
-					const redirect = checkMetaRefresh(tag, metaRefreshRegex, target.toString(), debugLog);
+					const redirect = parsingHeadTags
+						? checkMetaRefresh(tag, metaRefreshRegex, target.toString(), debugLog)
+						: undefined;
 					if (redirect) {
 						metaRedirect = redirect;
 						return;
@@ -456,6 +488,7 @@ export async function isAstroWebsite(
 				const { done, value } = await withAbort(activeReader.read(), controller.signal);
 				if (done) break;
 				totalBytes += value.byteLength;
+				responseBytes += value.byteLength;
 				if (totalBytes > maxBytes) {
 					throw new CustomError(
 						`Response exceeded the ${String(maxBytes)} byte limit`,
@@ -481,7 +514,10 @@ export async function isAstroWebsite(
 				redirectsFollowed++;
 				continue;
 			}
-			if (completedResult) return completedResult;
+			if (completedResult) return withInfrastructure(completedResult, infrastructure);
+			if (responseBytes === 0) {
+				throw new CustomError("Received an empty response body", originalUrl, lastFetchedUrl);
+			}
 
 			// The stream callback updates this state when it crosses </head>.
 			// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -489,15 +525,24 @@ export async function isAstroWebsite(
 				scanMarkers(headScanner, phaseBuffer, true, headDetector);
 				scanMarkers(unclosedHeadScanner, phaseBuffer, true, fallbackDetector);
 				if (generator.astro || generator.starlight) {
-					return generatorResult(originalUrl, lastFetchedUrl, generator);
+					return withInfrastructure(
+						generatorResult(originalUrl, lastFetchedUrl, generator),
+						infrastructure,
+					);
 				}
 				if (unclosedHeadScanner.markers.size > 0) {
-					return markerResult(originalUrl, lastFetchedUrl, unclosedHeadScanner.markers);
+					return withInfrastructure(
+						markerResult(originalUrl, lastFetchedUrl, unclosedHeadScanner.markers),
+						infrastructure,
+					);
 				}
 			} else {
 				scanMarkers(bodyScanner, "", true, bodyDetector);
 				if (bodyScanner.markers.size > 0) {
-					return markerResult(originalUrl, lastFetchedUrl, bodyScanner.markers);
+					return withInfrastructure(
+						markerResult(originalUrl, lastFetchedUrl, bodyScanner.markers),
+						infrastructure,
+					);
 				}
 			}
 
@@ -521,7 +566,9 @@ export async function isAstroWebsite(
 function cacheKey(url: string | URL, options: DetectionOptions): string {
 	let normalized = url.toString();
 	try {
-		normalized = new URL(normalized).toString();
+		const parsed = new URL(normalized);
+		parsed.hash = "";
+		normalized = parsed.toString();
 	} catch {
 		// The uncached detector will return the detailed validation error.
 	}

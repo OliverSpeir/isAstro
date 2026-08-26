@@ -40,8 +40,25 @@ Successful checks return:
 	lastFetchedUrl: string;
 	astroVersion?: string;
 	starlightVersion?: string;
+	infrastructure?: Array<{
+		name: string;
+		layer: "edge" | "hosting";
+		evidence: string;
+		confidence?: "likely";
+	}>;
+	showcase?:
+		| { listed: false }
+		| { listed: true; title: string; url: string };
+	starlightShowcase?:
+		| { listed: false }
+		| { listed: true; title: string; url: string };
 }
 ```
+
+Positive checks also compare the final site with the official Astro showcase. The showcase
+dataset is cached for one day and is available to the minimal client-side search at `/showcase`.
+Starlight detections are also compared with Starlight's official showcase source. Non-root
+listings are matched by path so unrelated projects on a shared hostname are not conflated.
 
 The OpenAPI 3.1 description is served at `/openapi.json`. Regenerate
 `public/openapi.json` after changing the API contract or package version:
