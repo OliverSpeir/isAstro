@@ -1,24 +1,12 @@
 export const prerender = false;
 import type { APIRoute } from "astro";
-import { checkWebsiteInput } from "@lib/modules/server/request";
+import { checkWebsiteInput } from "@lib/check";
 
 const CORS_HEADERS = {
 	"Access-Control-Allow-Origin": "*",
 	"Access-Control-Allow-Methods": "GET, OPTIONS",
 	"Access-Control-Allow-Headers": "Content-Type",
-} as const;
-
-const JSON_HEADERS = {
-	...CORS_HEADERS,
-	"Content-Type": "application/json; charset=utf-8",
-} as const;
-
-function json(body: unknown, status: number, cacheControl = "no-store"): Response {
-	return new Response(JSON.stringify(body), {
-		status,
-		headers: { ...JSON_HEADERS, "Cache-Control": cacheControl },
-	});
-}
+};
 
 export const OPTIONS: APIRoute = () =>
 	new Response(null, {
@@ -26,35 +14,23 @@ export const OPTIONS: APIRoute = () =>
 		headers: {
 			...CORS_HEADERS,
 			"Access-Control-Max-Age": "86400",
-			Allow: "GET, OPTIONS",
 			"Cache-Control": "public, max-age=86400",
 		},
 	});
 
+/** 200 whenever the check ran, even if the site blocked us or was down. 400 only for bad input. */
 export const GET: APIRoute = async ({ url }) => {
-	const urlParam = url.searchParams.get("url");
-	if (urlParam === null) {
-		return json({ error: "Missing required query parameter: url" }, 400);
+	const result = await checkWebsiteInput(url.searchParams.get("url") ?? "");
+	if (!result.ok) {
+		return Response.json(
+			{ error: result.message, url: result.url },
+			{ status: 400, headers: { ...CORS_HEADERS, "Cache-Control": "no-store" } },
+		);
 	}
-
-	const check = await checkWebsiteInput(urlParam);
-	if (check.ok) {
-		return json(check.result, 200, "public, max-age=60, s-maxage=300, stale-while-revalidate=600");
-	}
-
-	if (check.kind !== "request") {
-		return json({ error: check.message, url: check.normalizedUrl }, 400);
-	}
-
-	const status = check.message === "Request timed out" ? 504 : 502;
-	return json(
-		{
-			isAstro: false,
-			isStarlight: false,
-			mechanism: check.message,
-			url: check.normalizedUrl,
-			...(check.lastFetchedUrl && { lastFetchedUrl: check.lastFetchedUrl }),
+	return Response.json(result.check, {
+		headers: {
+			...CORS_HEADERS,
+			"Cache-Control": "public, max-age=60, s-maxage=300, stale-while-revalidate=600",
 		},
-		status,
-	);
+	});
 };

@@ -21,6 +21,17 @@ const jsonContent = (schema) => ({
 	"application/json": { schema },
 });
 
+/**
+ * @param {string[]} required
+ * @param {Record<string, unknown>} properties
+ */
+const object = (required, properties) => ({
+	type: "object",
+	additionalProperties: false,
+	required,
+	properties,
+});
+
 const spec = {
 	openapi: "3.1.0",
 	info: {
@@ -51,20 +62,13 @@ const spec = {
 				],
 				responses: {
 					200: {
-						description: "Detection completed",
-						content: jsonContent({ $ref: "#/components/schemas/DetectionResult" }),
+						description:
+							"The check ran. Inspect verdict.status: a site that blocked us or was down is still a 200.",
+						content: jsonContent({ $ref: "#/components/schemas/Check" }),
 					},
 					400: {
-						description: "The URL query parameter is missing or invalid",
+						description: "The url query parameter is missing or not a public website URL",
 						content: jsonContent({ $ref: "#/components/schemas/ApiError" }),
-					},
-					502: {
-						description: "The target website could not be checked",
-						content: jsonContent({ $ref: "#/components/schemas/DetectionFailure" }),
-					},
-					504: {
-						description: "The target website did not respond before the deadline",
-						content: jsonContent({ $ref: "#/components/schemas/DetectionFailure" }),
 					},
 				},
 			},
@@ -79,80 +83,93 @@ const spec = {
 	},
 	components: {
 		schemas: {
-			DetectionResult: {
+			Check: {
 				type: "object",
 				additionalProperties: false,
-				required: ["url", "lastFetchedUrl", "isAstro", "isStarlight", "mechanism"],
+				required: ["url", "finalUrl", "verdict", "infrastructure"],
 				properties: {
 					url: { type: "string", format: "uri" },
-					lastFetchedUrl: { type: "string", format: "uri" },
-					isAstro: { type: "boolean" },
-					isStarlight: { type: "boolean" },
-					mechanism: { type: "string" },
-					astroVersion: { type: "string" },
-					starlightVersion: { type: "string" },
+					finalUrl: { type: "string", format: "uri", description: "URL after redirects" },
+					verdict: { $ref: "#/components/schemas/Verdict" },
 					infrastructure: {
-						type: "array",
-						description:
-							"Edge and hosting providers detected for an Astro site. Inferred providers include a confidence field.",
-						items: { $ref: "#/components/schemas/InfrastructureProvider" },
-					},
-					showcase: { $ref: "#/components/schemas/ShowcaseStatus" },
-					starlightShowcase: { $ref: "#/components/schemas/ShowcaseStatus" },
-				},
-			},
-			InfrastructureProvider: {
-				type: "object",
-				additionalProperties: false,
-				required: ["name", "layer", "evidence"],
-				properties: {
-					name: { type: "string" },
-					layer: { type: "string", enum: ["edge", "hosting"] },
-					evidence: { type: "string" },
-					confidence: { type: "string", enum: ["likely"] },
-				},
-			},
-			ShowcaseStatus: {
-				oneOf: [
-					{
 						type: "object",
 						additionalProperties: false,
-						required: ["listed"],
-						properties: { listed: { type: "boolean", const: false } },
-					},
-					{
-						type: "object",
-						additionalProperties: false,
-						required: ["listed", "title", "url"],
+						required: ["edge", "host"],
 						properties: {
-							listed: { type: "boolean", const: true },
-							title: { type: "string" },
-							url: { type: "string", format: "uri" },
+							edge: { $ref: "#/components/schemas/Layer" },
+							host: { $ref: "#/components/schemas/Layer" },
 						},
 					},
+					showcase: {
+						type: "object",
+						description: "Only present for Astro sites",
+						additionalProperties: false,
+						properties: {
+							astro: { $ref: "#/components/schemas/ShowcaseStatus" },
+							starlight: { $ref: "#/components/schemas/ShowcaseStatus" },
+						},
+					},
+				},
+			},
+			Verdict: {
+				oneOf: [
+					object(["status", "starlight", "evidence"], {
+						status: { const: "astro" },
+						starlight: { type: "boolean" },
+						astroVersion: { type: "string" },
+						starlightVersion: { type: "string" },
+						evidence: { type: "array", items: { type: "string" } },
+					}),
+					object(["status"], { status: { const: "not-astro" } }),
+					object(["status", "by"], {
+						status: { const: "blocked" },
+						by: { enum: ["cloudflare", "vercel", "sgcaptcha"] },
+					}),
+					object(["status", "reason"], {
+						status: { const: "unreachable" },
+						reason: {
+							enum: [
+								"timeout",
+								"network-error",
+								"http-error",
+								"not-html",
+								"empty-body",
+								"too-large",
+								"too-many-redirects",
+								"disallowed-redirect",
+							],
+						},
+						httpStatus: { type: "integer" },
+					}),
 				],
 			},
-			ApiError: {
-				type: "object",
-				additionalProperties: false,
-				required: ["error"],
-				properties: {
-					error: { type: "string" },
-					url: { type: "string" },
-				},
+			Layer: {
+				description: '"hidden" means a CDN answered, so the origin behind it is not observable.',
+				oneOf: [
+					object(["status", "providers"], {
+						status: { const: "identified" },
+						providers: { type: "array", items: { $ref: "#/components/schemas/Provider" } },
+					}),
+					object(["status"], { status: { const: "hidden" } }),
+					object(["status"], { status: { const: "unknown" } }),
+				],
 			},
-			DetectionFailure: {
-				type: "object",
-				additionalProperties: false,
-				required: ["url", "isAstro", "isStarlight", "mechanism"],
-				properties: {
-					url: { type: "string", format: "uri" },
-					lastFetchedUrl: { type: "string", format: "uri" },
-					isAstro: { type: "boolean", const: false },
-					isStarlight: { type: "boolean", const: false },
-					mechanism: { type: "string" },
-				},
+			Provider: object(["name", "confidence", "evidence"], {
+				name: { type: "string" },
+				confidence: { enum: ["confirmed", "likely"] },
+				evidence: { type: "array", items: { type: "string" } },
+			}),
+			ShowcaseStatus: {
+				oneOf: [
+					object(["listed"], { listed: { const: false } }),
+					object(["listed", "title", "url"], {
+						listed: { const: true },
+						title: { type: "string" },
+						url: { type: "string", format: "uri" },
+					}),
+				],
 			},
+			ApiError: object(["error"], { error: { type: "string" }, url: { type: "string" } }),
 		},
 	},
 };

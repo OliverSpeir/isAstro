@@ -1,47 +1,27 @@
 ---
 export const prerender = false;
 import Layout from "@layouts/DefaultPage.astro";
-import type { DetectionResult, InfrastructureProvider } from "@lib/modules/server";
-import { checkWebsiteInput } from "@lib/modules/server/request";
+import { checkWebsiteInput, type Check, type Layer, type Verdict } from "@lib/check";
 import { providerIconIds } from "@lib/provider-icons";
 
-let title = "isAstro";
-let description = "Check if a website is built with Astro";
-let result: DetectionResult | null = null;
-let checkingError = false;
-let inputError: string | null = null;
 const hasUrlParam = Astro.url.searchParams.has("site") || Astro.url.searchParams.has("url");
 const urlParam = Astro.url.searchParams.get("site") ?? Astro.url.searchParams.get("url") ?? "";
 
 if (Astro.request.method === "POST") {
-	const formData = await Astro.request.formData();
-	const urlValue = formData.get("url");
-	if (typeof urlValue === "string") {
-		return Astro.redirect(`?site=${encodeURIComponent(urlValue.trim())}`);
-	}
-	return Astro.redirect("?site=");
+	const submitted = (await Astro.request.formData()).get("url");
+	const redirectUrl = new URL(Astro.url);
+	redirectUrl.search = new URLSearchParams({
+		site: typeof submitted === "string" ? submitted.trim() : "",
+	}).toString();
+	return Astro.redirect(redirectUrl.toString());
 }
 
+let check: Check | undefined;
+let inputError: string | undefined;
 if (hasUrlParam) {
-	if (!urlParam.trim()) {
-		inputError = "Enter a website URL.";
-	} else {
-		const check = await checkWebsiteInput(urlParam);
-		if (check.ok) {
-			result = check.result;
-		} else if (check.kind !== "request") {
-			inputError = check.message;
-		} else {
-			checkingError = true;
-			result = {
-				isAstro: false,
-				isStarlight: false,
-				mechanism: check.message,
-				url: check.normalizedUrl,
-				lastFetchedUrl: check.lastFetchedUrl ?? check.normalizedUrl,
-			};
-		}
-	}
+	const result = await checkWebsiteInput(urlParam);
+	if (result.ok) check = result.check;
+	else inputError = result.message;
 }
 
 Astro.response.headers.set(
@@ -51,65 +31,77 @@ Astro.response.headers.set(
 		: "public, max-age=0, s-maxage=3600, stale-while-revalidate=86400",
 );
 
-if (result) {
-	const displayUrl = result.url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-	const status = checkingError ? "Not Sure" : result.isAstro ? "Probably" : "Probably not";
-	title = `is ${displayUrl} Astro? ${status}`;
-	const descriptionParts = [
-		result.mechanism,
-		result.astroVersion ? `Astro ${result.astroVersion}` : undefined,
-		result.starlightVersion ? `Starlight ${result.starlightVersion}` : undefined,
-		...(result.infrastructure ?? []).map(
-			(provider) =>
-				`${provider.layer === "edge" ? "Edge" : "Host"}: ${provider.name}${provider.confidence === "likely" ? " (likely)" : ""}`,
-		),
-		result.showcase
-			? `Astro Showcase: ${result.showcase.listed ? "listed" : "not listed"}`
-			: undefined,
-		result.starlightShowcase
-			? `Starlight Showcase: ${result.starlightShowcase.listed ? "listed" : "not listed"}`
-			: undefined,
-	].filter((part): part is string => Boolean(part));
-	description = descriptionParts.join(" · ");
+const BOT_WALL_NAMES = {
+	cloudflare: "Cloudflare",
+	vercel: "Vercel",
+	sgcaptcha: "SiteGround",
+} as const;
+const UNREACHABLE_REASONS = {
+	timeout: "The site didn't respond in time",
+	"network-error": "The site couldn't be reached",
+	"http-error": "The site returned an error",
+	"not-html": "The URL isn't an HTML page",
+	"empty-body": "The site returned an empty page",
+	"too-large": "The page is too large to check",
+	"too-many-redirects": "Too many redirects",
+	"disallowed-redirect": "The site redirected to a disallowed address",
+} as const;
+
+function verdictHeading(verdict: Verdict): string {
+	if (verdict.status === "astro") return "Astro Detected";
+	if (verdict.status === "not-astro") return "Not using Astro";
+	return "Unable to check";
 }
 
-function generatorEvidence(name: "Astro" | "Starlight", version?: string): string {
-	return `Found generator tag: "${name}${version ? ` ${version}` : ""}"`;
+function verdictDetail(verdict: Verdict): string {
+	if (verdict.status === "astro") return verdict.evidence.join(", ");
+	if (verdict.status === "not-astro") return "No Astro evidence found";
+	if (verdict.status === "blocked")
+		return `Blocked by ${BOT_WALL_NAMES[verdict.by]} bot protection`;
+	const status = verdict.httpStatus ? ` (${String(verdict.httpStatus)})` : "";
+	return `${UNREACHABLE_REASONS[verdict.reason]}${status}`;
 }
 
-function astroEvidence(value: DetectionResult): string {
-	if (value.astroVersion) return generatorEvidence("Astro", value.astroVersion);
-	if (value.mechanism === "Found generator meta tag" && !value.isStarlight) {
-		return generatorEvidence("Astro");
-	}
-	if (value.isStarlight) return "Detected through the Starlight generator tag";
-	return value.mechanism;
+function layerSummary(layer: Layer): string {
+	if (layer.status === "identified")
+		return layer.providers.map((provider) => provider.name).join(", ");
+	return layer.status === "hidden" ? "hidden behind CDN" : "unknown";
 }
 
-const apiHref = result ? `/api?url=${encodeURIComponent(result.url)}` : "/openapi.json";
-const describedBy = inputError ? "url-error" : undefined;
-const astroResultEvidence = result ? astroEvidence(result) : "";
-const starlightResultEvidence = result
-	? generatorEvidence("Starlight", result.starlightVersion)
-	: "";
-const infrastructure = result?.isAstro ? (result.infrastructure ?? []) : [];
-const showcaseStatus = result?.isAstro ? result.showcase : undefined;
-const starlightShowcaseStatus = result?.isStarlight ? result.starlightShowcase : undefined;
-const astroShowcaseDiscussion =
-	"https://github.com/withastro/roadmap/discussions/521#new_comment_field";
-const starlightShowcaseInstructions =
-	"https://github.com/withastro/starlight/blob/main/CONTRIBUTING.md#sites";
-function iconForProvider(name: string): string {
-	return providerIconIds[name] ?? "server";
+const verdict = check?.verdict;
+const isAstro = verdict?.status === "astro";
+const isStarlight = verdict?.status === "astro" && verdict.starlight;
+const isUnsure = verdict?.status === "blocked" || verdict?.status === "unreachable";
+const layers = check
+	? ([
+			["Edge", check.infrastructure.edge],
+			["Host", check.infrastructure.host],
+		] as const)
+	: [];
+const showInfrastructure = layers.some(([, layer]) => layer.status !== "unknown");
+
+let title = "isAstro";
+let description = "Check if a website is built with Astro";
+if (check && verdict) {
+	const displayUrl = check.url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+	title = `is ${displayUrl} Astro? ${isAstro ? "Probably" : isUnsure ? "Not Sure" : "Probably not"}`;
+	description = [
+		verdictDetail(verdict),
+		...layers.map(([label, layer]) => `${label}: ${layerSummary(layer)}`),
+		check.showcase?.astro &&
+			`Astro Showcase: ${check.showcase.astro.listed ? "listed" : "not listed"}`,
+		check.showcase?.starlight &&
+			`Starlight Showcase: ${check.showcase.starlight.listed ? "listed" : "not listed"}`,
+	]
+		.filter(Boolean)
+		.join(" · ");
 }
 
-	function infrastructureEvidence(evidence: string): string {
-		return evidence.replace(" response header", " header");
-	}
-
-	function showLikelyLabel(provider: InfrastructureProvider): boolean {
-		return provider.confidence === "likely" && !provider.evidence.endsWith(" response header");
-	}
+const apiHref = check ? `/api?url=${encodeURIComponent(check.url)}` : "/openapi.json";
+const showcaseLinks = {
+	astro: "https://github.com/withastro/roadmap/discussions/521#new_comment_field",
+	starlight: "https://github.com/withastro/starlight/blob/main/CONTRIBUTING.md#sites",
+} as const;
 ---
 
 <Layout {title} {description}>
@@ -139,8 +131,7 @@ function iconForProvider(name: string): string {
 				stroke-linecap="round"
 				stroke-linejoin="round"
 				stroke-width="1.5"
-				d="M14 5h5v5m0-5l-9 9m7-1v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h5"
-			/>
+				d="M14 5h5v5m0-5l-9 9m7-1v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h5"></path>
 		</symbol>
 		<symbol id="infrastructure-icon" viewBox="0 0 24 24">
 			<path
@@ -154,11 +145,19 @@ function iconForProvider(name: string): string {
 				clip-rule="evenodd"></path>
 		</symbol>
 	</svg>
-	<main class:list={{ "has-result-page": Boolean(result) }}>
-		<div class:list={["site-panel", { "has-result": Boolean(result) }]}>
+	<main class:list={{ "has-result-page": Boolean(check) }}>
+		<div class:list={["site-panel", { "has-result": Boolean(check) }]}>
 			<header>
 				<h1>
-					{result ? <a class="home-link" href="/">isAstro</a> : "isAstro"}
+					{
+						check ? (
+							<a class="home-link" href="/">
+								isAstro
+							</a>
+						) : (
+							"isAstro"
+						)
+					}
 				</h1>
 				<p class="subtitle">
 					Detect if a site is powered by <a href="https://astro.build/">Astro</a>
@@ -176,7 +175,7 @@ function iconForProvider(name: string): string {
 					autocapitalize="none"
 					spellcheck="false"
 					aria-invalid={inputError ? "true" : undefined}
-					aria-describedby={describedBy}
+					aria-describedby={inputError ? "url-error" : undefined}
 					aria-errormessage={inputError ? "url-error" : undefined}
 					placeholder="https://example.com"
 					required
@@ -190,59 +189,49 @@ function iconForProvider(name: string): string {
 						</p>
 					)
 				}
-				<button type="submit">{result ? "Check" : "Check Website"}</button>
+				<button type="submit">{check ? "Check" : "Check Website"}</button>
 			</form>
 
 			{
-				result && (
+				check && verdict && (
 					<section class="result-container" aria-labelledby="result-title">
-						<div
-							class={`status-box ${checkingError ? "error" : result.isAstro ? "success" : "not-astro"}`}
-						>
+						<div class={`status-box ${isAstro ? "success" : isUnsure ? "error" : "not-astro"}`}>
 							<div class="detection-result">
 								<h2 id="result-title" class="status-title">
-									{result.isAstro ? (
+									{isAstro ? (
 										<img class="status-icon framework-icon" src="/astro.svg" alt="" />
-									) : !checkingError ? (
+									) : !isUnsure ? (
 										<svg class="status-icon negative-icon" viewBox="0 0 24 24" aria-hidden="true">
 											<use href="#x-icon" />
 										</svg>
 									) : null}
-									{result.isAstro
-										? "Astro Detected"
-										: checkingError
-											? "Unable to check"
-											: "Not using Astro"}
+									{verdictHeading(verdict)}
 								</h2>
 								<dl class="result-details">
 									<div>
-										<dt>Evidence:</dt>
-										<dd>{astroResultEvidence}</dd>
+										<dt>{isAstro ? "Evidence:" : "Details:"}</dt>
+										<dd>{verdictDetail(verdict)}</dd>
 									</div>
-									{result.isAstro && (
+									{check.showcase?.astro && (
 										<div>
 											<dt>Showcase:</dt>
 											<dd>
-												{showcaseStatus ? (
-													showcaseStatus.listed ? (
-														<span title={showcaseStatus.title}>Listed</span>
-													) : (
-														<span class="showcase-not-listed">
-															Not listed -
-															<a
-																class="inline-action"
-																href={astroShowcaseDiscussion}
-																aria-label="Add this site to the Astro Showcase"
-															>
-																<span>Add it</span>
-																<svg class="outbound-icon" aria-hidden="true">
-																	<use href="#external-link-icon" />
-																</svg>
-															</a>
-														</span>
-													)
+												{check.showcase.astro.listed ? (
+													<span title={check.showcase.astro.title}>Listed</span>
 												) : (
-													"Unsure"
+													<span class="showcase-not-listed">
+														Not listed -
+														<a
+															class="inline-action"
+															href={showcaseLinks.astro}
+															aria-label="Add this site to the Astro Showcase"
+														>
+															<span>Add it</span>
+															<svg class="outbound-icon" aria-hidden="true">
+																<use href="#external-link-icon" />
+															</svg>
+														</a>
+													</span>
 												)}
 											</dd>
 										</div>
@@ -250,29 +239,25 @@ function iconForProvider(name: string): string {
 								</dl>
 							</div>
 
-							{result.isStarlight && (
+							{isStarlight && (
 								<div class="detection-result">
 									<h3 class="status-title">
 										<img class="status-icon framework-icon" src="/starlight.svg" alt="" />
 										Starlight Detected
 									</h3>
-									<dl class="result-details">
-										<div>
-											<dt>Evidence:</dt>
-											<dd>{starlightResultEvidence}</dd>
-										</div>
-										<div>
-											<dt>Showcase:</dt>
-											<dd>
-												{starlightShowcaseStatus ? (
-													starlightShowcaseStatus.listed ? (
-														<span title={starlightShowcaseStatus.title}>Listed</span>
+									{check.showcase?.starlight && (
+										<dl class="result-details">
+											<div>
+												<dt>Showcase:</dt>
+												<dd>
+													{check.showcase.starlight.listed ? (
+														<span title={check.showcase.starlight.title}>Listed</span>
 													) : (
 														<span class="showcase-not-listed">
 															Not listed -
 															<a
 																class="inline-action"
-																href={starlightShowcaseInstructions}
+																href={showcaseLinks.starlight}
 																aria-label="Add this site to the Starlight Showcase"
 															>
 																<span>Add it</span>
@@ -281,17 +266,15 @@ function iconForProvider(name: string): string {
 																</svg>
 															</a>
 														</span>
-													)
-												) : (
-													"Unsure"
-												)}
-											</dd>
-										</div>
-									</dl>
+													)}
+												</dd>
+											</div>
+										</dl>
+									)}
 								</div>
 							)}
 
-							{result.isAstro && (
+							{showInfrastructure && (
 								<div class="detection-result">
 									<h3 class="status-title">
 										<svg class="status-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -300,80 +283,74 @@ function iconForProvider(name: string): string {
 										Infrastructure
 									</h3>
 									<dl class="result-details infrastructure-details">
-									{(["edge", "hosting"] as const).map((layer) => {
-										const providers = infrastructure.filter((provider) => provider.layer === layer);
-										if (providers.length === 0) {
-											return (
+										{layers.map(([label, layer]) =>
+											layer.status === "identified" ? (
+												layer.providers.map((provider) => (
+													<div>
+														<dt>{label}:</dt>
+														<dd class="provider-detail">
+															<span class="provider-mark" aria-hidden="true">
+																<svg viewBox="0 0 24 24">
+																	<use
+																		href={`/provider-icons.svg#${providerIconIds[provider.name] ?? "server"}`}
+																	/>
+																</svg>
+															</span>
+															<span class="provider-copy">
+																<strong>{`${provider.name}:`}</strong>
+																{` ${provider.evidence.join(", ")}`}
+																{provider.confidence === "likely" ? " · likely" : ""}
+															</span>
+														</dd>
+													</div>
+												))
+											) : (
 												<div>
-													<dt>{layer === "edge" ? "Edge:" : "Host:"}</dt>
-													<dd>Unsure</dd>
+													<dt>{label}:</dt>
+													<dd>{layer.status === "hidden" ? "Hidden behind CDN" : "Unknown"}</dd>
 												</div>
-											);
-										}
-										return providers.map((provider) => (
-											<div>
-												<dt>{layer === "edge" ? "Edge:" : "Host:"}</dt>
-												<dd class="provider-detail">
-													<span class="provider-mark" aria-hidden="true">
-														<svg viewBox="0 0 24 24">
-															<use href={`/provider-icons.svg#${iconForProvider(provider.name)}`} />
-														</svg>
-													</span>
-													<span
-														class="provider-copy"
-														title={provider.confidence === "likely" ? `Evidence: ${provider.evidence}` : undefined}
-													>
-															<strong>{`${provider.name}:`}</strong>
-															{` ${infrastructureEvidence(provider.evidence)}`}
-															{showLikelyLabel(provider) ? " · likely" : ""}
-														</span>
-												</dd>
-											</div>
-										));
-									})}
-								</dl>
-							</div>
-						)}
+											),
+										)}
+									</dl>
+								</div>
+							)}
 						</div>
 
 						<div class="result-actions">
-						<button id="copyButton" type="button" class="copy-link">
-							<span id="copyIcon" class="copy-icon" aria-hidden="true">
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									width="1em"
-									height="1em"
-									viewBox="0 0 24 24"
-									aria-hidden="true"
-								>
-									<path d="M0 0h24v24H0z" fill="none" />
-									<path
-										fill="none"
-										stroke="currentColor"
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="1.5"
-										d="M20.829 12.861c.171-.413.171-.938.171-1.986s0-1.573-.171-1.986a2.25 2.25 0 0 0-1.218-1.218c-.413-.171-.938-.171-1.986-.171H11.1c-1.26 0-1.89 0-2.371.245a2.25 2.25 0 0 0-.984.984C7.5 9.209 7.5 9.839 7.5 11.1v6.525c0 1.048 0 1.573.171 1.986c.229.551.667.99 1.218 1.218c.413.171.938.171 1.986.171s1.573 0 1.986-.171m7.968-7.968a2.25 2.25 0 0 1-1.218 1.218c-.413.171-.938.171-1.986.171s-1.573 0-1.986.171a2.25 2.25 0 0 0-1.218 1.218c-.171.413-.171.938-.171 1.986s0 1.573-.171 1.986a2.25 2.25 0 0 1-1.218 1.218m7.968-7.968a11.68 11.68 0 0 1-7.75 7.9l-.218.068M16.5 7.5v-.9c0-1.26 0-1.89-.245-2.371a2.25 2.25 0 0 0-.983-.984C14.79 3 14.16 3 12.9 3H6.6c-1.26 0-1.89 0-2.371.245a2.25 2.25 0 0 0-.984.984C3 4.709 3 5.339 3 6.6v6.3c0 1.26 0 1.89.245 2.371c.216.424.56.768.984.984c.48.245 1.111.245 2.372.245H7.5"
-									/>
-								</svg>
-							</span>
-							<span id="copiedIcon" class="copy-icon" aria-hidden="true" hidden>
-								<svg
-									xmlns="http://www.w3.org/2000/svg"
-									width="1em"
-									height="1em"
-									viewBox="0 0 24 24"
-									aria-hidden="true"
-								>
-									<use href="#checkmark-icon" />
-								</svg>
-							</span>
-							<span id="copyButtonText">Copy result link</span>
-						</button>
-							<a
-								class="visit-link"
-								href={result.lastFetchedUrl}
-							>
+							<button id="copyButton" type="button" class="copy-link">
+								<span id="copyIcon" class="copy-icon" aria-hidden="true">
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										width="1em"
+										height="1em"
+										viewBox="0 0 24 24"
+										aria-hidden="true"
+									>
+										<path d="M0 0h24v24H0z" fill="none" />
+										<path
+											fill="none"
+											stroke="currentColor"
+											stroke-linecap="round"
+											stroke-linejoin="round"
+											stroke-width="1.5"
+											d="M20.829 12.861c.171-.413.171-.938.171-1.986s0-1.573-.171-1.986a2.25 2.25 0 0 0-1.218-1.218c-.413-.171-.938-.171-1.986-.171H11.1c-1.26 0-1.89 0-2.371.245a2.25 2.25 0 0 0-.984.984C7.5 9.209 7.5 9.839 7.5 11.1v6.525c0 1.048 0 1.573.171 1.986c.229.551.667.99 1.218 1.218c.413.171.938.171 1.986.171s1.573 0 1.986-.171m7.968-7.968a2.25 2.25 0 0 1-1.218 1.218c-.413.171-.938.171-1.986.171s-1.573 0-1.986.171a2.25 2.25 0 0 0-1.218 1.218c-.171.413-.171.938-.171 1.986s0 1.573-.171 1.986a2.25 2.25 0 0 1-1.218 1.218m7.968-7.968a11.68 11.68 0 0 1-7.75 7.9l-.218.068M16.5 7.5v-.9c0-1.26 0-1.89-.245-2.371a2.25 2.25 0 0 0-.983-.984C14.79 3 14.16 3 12.9 3H6.6c-1.26 0-1.89 0-2.371.245a2.25 2.25 0 0 0-.984.984C3 4.709 3 5.339 3 6.6v6.3c0 1.26 0 1.89.245 2.371c.216.424.56.768.984.984c.48.245 1.111.245 2.372.245H7.5"
+										/>
+									</svg>
+								</span>
+								<span id="copiedIcon" class="copy-icon" aria-hidden="true" hidden>
+									<svg
+										xmlns="http://www.w3.org/2000/svg"
+										width="1em"
+										height="1em"
+										viewBox="0 0 24 24"
+										aria-hidden="true"
+									>
+										<use href="#checkmark-icon" />
+									</svg>
+								</span>
+								<span id="copyButtonText">Copy result link</span>
+							</button>
+							<a class="visit-link" href={check.finalUrl}>
 								Visit site
 								<svg class="outbound-icon" aria-hidden="true">
 									<use href="#external-link-icon" />
@@ -443,7 +420,6 @@ function iconForProvider(name: string): string {
 				resetTimer = setTimeout(resetCopyState, 3000);
 			}
 		});
-
 	</script>
 </Layout>
 

@@ -1,0 +1,253 @@
+/**
+ * Streaming, single-pass HTML scanner that looks for Astro evidence.
+ *
+ * States: text → tag | comment | raw-text (script/style/…) → text.
+ * Phases: head → body. Head ends at </head>, <body>, or the first tag that
+ * can't live in <head> (so minified pages that omit optional tags still work).
+ *
+ * Decision rules:
+ * - A generator meta tag or marker in <head> decides at the end of <head>, so
+ *   we can report the version even when an asset marker came first.
+ * - In <body>, the first marker decides immediately.
+ * - A meta refresh in <head> is followed like a redirect.
+ */
+
+import type { Verdict } from "./types";
+
+export type ScanResult =
+	| Extract<Verdict, { status: "astro" | "not-astro" }>
+	| { status: "meta-refresh"; location: string };
+
+type Mode =
+	{ name: "text" } | { name: "comment" } | { name: "raw-text"; element: string; closer: RegExp };
+
+const MAX_CARRY_LENGTH = 16_384;
+const STYLE_OVERLAP_LENGTH = 64;
+
+/** Elements whose contents are not markup (or are examples of markup). */
+const RAW_TEXT_ELEMENTS = new Set([
+	"script",
+	"style",
+	"textarea",
+	"template",
+	"pre",
+	"title",
+	"xmp",
+]);
+const HEAD_ELEMENTS = new Set([
+	"html",
+	"head",
+	"meta",
+	"link",
+	"title",
+	"style",
+	"script",
+	"noscript",
+	"base",
+	"template",
+]);
+
+const TAG_NAME = /^<(\/?)([a-zA-Z][\w:-]*)/;
+const ATTRIBUTE = /([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+const GENERATOR_CONTENT = /^(Astro|Starlight)(?:\s+(.+))?$/i;
+const META_REFRESH_CONTENT = /^\s*\d+(?:\.\d+)?\s*[;,]\s*url\s*=\s*(.*?)\s*$/i;
+
+const TAG_MARKERS: readonly (readonly [RegExp, string])[] = [
+	[/\sdata-astro-[\w-]+/, "data-astro-* attribute"],
+	[/\sclass\s*=\s*(?:"[^"]*|'[^']*|[^\s>]*)\bastro-[a-zA-Z0-9]{8}\b/, "scoped astro-* class"],
+	[/(?:^|["'=\s/,(])_astro\//, "_astro/ asset"],
+];
+const STYLE_MARKERS: readonly (readonly [RegExp, string])[] = [
+	[/:where\(\.astro-[a-zA-Z0-9]{8}\)/, "scoped style selector"],
+	[/\[data-astro-cid-[a-zA-Z0-9]+\]/, "scoped style selector"],
+];
+
+export function createPageScanner(baseUrl: string) {
+	let carry = "";
+	let mode: Mode = { name: "text" };
+	let inHead = true;
+	let styleTail = "";
+	let astroGenerator: { version?: string } | undefined;
+	let starlightGenerator: { version?: string } | undefined;
+	const markers = new Set<string>();
+
+	function astroResult(): ScanResult | undefined {
+		if (!astroGenerator && !starlightGenerator && markers.size === 0) return undefined;
+		const evidence: string[] = [];
+		if (astroGenerator) evidence.push(generatorEvidence("Astro", astroGenerator.version));
+		if (starlightGenerator)
+			evidence.push(generatorEvidence("Starlight", starlightGenerator.version));
+		evidence.push(...markers);
+		return {
+			status: "astro",
+			starlight: Boolean(starlightGenerator),
+			...(astroGenerator?.version && { astroVersion: astroGenerator.version }),
+			...(starlightGenerator?.version && { starlightVersion: starlightGenerator.version }),
+			evidence,
+		};
+	}
+
+	function endHead(): ScanResult | undefined {
+		inHead = false;
+		return astroResult();
+	}
+
+	function handleTag(tag: string): ScanResult | undefined {
+		const nameMatch = TAG_NAME.exec(tag);
+		if (!nameMatch?.[2]) return undefined;
+		const closing = nameMatch[1] === "/";
+		const name = nameMatch[2].toLowerCase();
+
+		if (inHead) {
+			const leavesHead = closing ? name === "head" : !HEAD_ELEMENTS.has(name);
+			if (leavesHead) {
+				const decided = endHead();
+				if (decided || closing) return decided;
+			} else if (!closing && name === "meta") {
+				const refresh = handleHeadMeta(tag);
+				if (refresh) return refresh;
+			}
+		}
+		if (closing) return undefined;
+
+		if (RAW_TEXT_ELEMENTS.has(name)) {
+			mode = { name: "raw-text", element: name, closer: new RegExp(`</${name}`, "gi") };
+		}
+		if (name.startsWith("astro-")) markers.add("astro-* element");
+		for (const [pattern, label] of TAG_MARKERS) {
+			if (pattern.test(tag)) markers.add(label);
+		}
+		return inHead ? undefined : astroResult();
+	}
+
+	function handleHeadMeta(tag: string): ScanResult | undefined {
+		const attributes = parseAttributes(tag);
+		if (attributes.get("name")?.trim().toLowerCase() === "generator") {
+			const match = GENERATOR_CONTENT.exec(attributes.get("content")?.trim() ?? "");
+			if (match?.[1]) {
+				const generator = { ...(match[2] && { version: match[2].trim() }) };
+				if (match[1].toLowerCase() === "astro") astroGenerator ??= generator;
+				else starlightGenerator ??= generator;
+			}
+			return undefined;
+		}
+		if (attributes.get("http-equiv")?.trim().toLowerCase() !== "refresh") return undefined;
+		const target = META_REFRESH_CONTENT.exec(attributes.get("content") ?? "")?.[1]
+			?.replace(/^(["'])(.*)\1$/, "$2")
+			.trim();
+		if (!target) return undefined;
+		try {
+			return { status: "meta-refresh", location: new URL(target, baseUrl).toString() };
+		} catch {
+			return undefined;
+		}
+	}
+
+	function handleStyleText(text: string): void {
+		const window = styleTail + text;
+		for (const [pattern, label] of STYLE_MARKERS) {
+			if (pattern.test(window)) markers.add(label);
+		}
+		styleTail = window.slice(-STYLE_OVERLAP_LENGTH);
+	}
+
+	/** Feed decoded text. Returns a result as soon as the page is decided. */
+	function write(chunk: string): ScanResult | undefined {
+		const input = carry + chunk;
+		carry = "";
+		let index = 0;
+
+		while (index < input.length) {
+			if (mode.name === "raw-text") {
+				mode.closer.lastIndex = index;
+				const close = mode.closer.exec(input);
+				const textEnd = close
+					? close.index
+					: Math.max(index, input.length - mode.element.length - 1);
+				if (mode.element === "style") handleStyleText(input.slice(index, textEnd));
+				if (!close) {
+					carry = input.slice(textEnd);
+					break;
+				}
+				mode = { name: "text" };
+				index = close.index;
+				if (!inHead) {
+					const decided = astroResult();
+					if (decided) return decided;
+				}
+				continue;
+			}
+
+			if (mode.name === "comment") {
+				const end = input.indexOf("-->", index);
+				if (end === -1) {
+					carry = input.slice(-2);
+					break;
+				}
+				mode = { name: "text" };
+				index = end + 3;
+				continue;
+			}
+
+			const tagStart = input.indexOf("<", index);
+			if (tagStart === -1) break;
+			if (input.startsWith("<!--", tagStart)) {
+				mode = { name: "comment" };
+				index = tagStart + 4;
+				continue;
+			}
+			const tagEnd = findTagEnd(input, tagStart);
+			if (tagEnd === -1) {
+				const partial = input.slice(tagStart);
+				carry = partial.length <= MAX_CARRY_LENGTH ? partial : "";
+				break;
+			}
+			const decided = handleTag(input.slice(tagStart, tagEnd + 1));
+			if (decided) return decided;
+			index = tagEnd + 1;
+		}
+		return undefined;
+	}
+
+	/** Call once the body is exhausted. */
+	function end(): ScanResult {
+		if (inHead) endHead();
+		return astroResult() ?? { status: "not-astro" };
+	}
+
+	return { write, end };
+}
+
+/** Finds the closing ">" of a tag, honouring quoted attribute values. */
+function findTagEnd(input: string, tagStart: number): number {
+	let previousSignificant = "";
+	for (let index = tagStart + 1; index < input.length; index++) {
+		const character = input[index];
+		if (character === ">") return index;
+		if ((character === '"' || character === "'") && previousSignificant === "=") {
+			const closingQuote = input.indexOf(character, index + 1);
+			if (closingQuote === -1) return -1;
+			index = closingQuote;
+			previousSignificant = character;
+			continue;
+		}
+		if (character !== " " && character !== "\n" && character !== "\t" && character !== "\r") {
+			previousSignificant = character ?? "";
+		}
+	}
+	return -1;
+}
+
+function parseAttributes(tag: string): Map<string, string> {
+	const attributes = new Map<string, string>();
+	ATTRIBUTE.lastIndex = TAG_NAME.exec(tag)?.[0].length ?? tag.length;
+	for (let match = ATTRIBUTE.exec(tag); match; match = ATTRIBUTE.exec(tag)) {
+		const name = match[1]?.toLowerCase();
+		if (name && !attributes.has(name)) attributes.set(name, match[2] ?? match[3] ?? match[4] ?? "");
+	}
+	return attributes;
+}
+
+function generatorEvidence(name: "Astro" | "Starlight", version: string | undefined): string {
+	return `generator meta tag "${name}${version ? ` ${version}` : ""}"`;
+}

@@ -13,7 +13,8 @@ Looks for:
 
 Attempts to be fast and not download more than needed, but will try to wait for the entire head to get a good faith attempt to find the generator tag because it's nice to see the version
 
-The main logic is in [lib/modules/server](./src/lib/modules/server/index.ts)
+The main logic is in [lib/check](./src/lib/check/index.ts): a small `fetch → classify → scan` state machine
+([detect.ts](./src/lib/check/detect.ts)) over a single-pass streaming HTML scanner ([html-scanner.ts](./src/lib/check/html-scanner.ts)).
 
 There are [some tests](./src/lib/test/index.ts) run with `pnpm test`
 
@@ -29,30 +30,27 @@ requires migrating the deployment from Pages to Workers.
 Send a `GET` request to `/api?url=astro.build` with a website URL or hostname. The route
 allows cross-origin `GET` requests and responds to CORS `OPTIONS` preflight requests.
 
-Successful checks return:
+Any check that ran returns `200`, including sites that blocked us or were down. Only invalid
+input returns `400`.
 
-```js
+```ts
 {
 	url: string;
-	isAstro: boolean;
-	isStarlight: boolean;
-	mechanism: string;
-	lastFetchedUrl: string;
-	astroVersion?: string;
-	starlightVersion?: string;
-	infrastructure?: Array<{
-		name: string;
-		layer: "edge" | "hosting";
-		evidence: string;
-		confidence?: "likely";
-	}>;
-	showcase?:
-		| { listed: false }
-		| { listed: true; title: string; url: string };
-	starlightShowcase?:
-		| { listed: false }
-		| { listed: true; title: string; url: string };
+	finalUrl: string; // after redirects
+	verdict:
+		| { status: "astro"; starlight: boolean; astroVersion?: string; starlightVersion?: string; evidence: string[] }
+		| { status: "not-astro" }
+		| { status: "blocked"; by: "cloudflare" | "vercel" | "sgcaptcha" }
+		| { status: "unreachable"; reason: "timeout" | "network-error" | "http-error" | "not-html" | "empty-body" | "too-large" | "too-many-redirects" | "disallowed-redirect"; httpStatus?: number };
+	infrastructure: { edge: Layer; host: Layer };
+	showcase?: { astro?: ShowcaseStatus; starlight?: ShowcaseStatus }; // Astro sites only
 }
+
+type Layer =
+	| { status: "identified"; providers: { name: string; confidence: "confirmed" | "likely"; evidence: string[] }[] }
+	| { status: "hidden" } // a CDN answered, so the origin isn't observable
+	| { status: "unknown" };
+type ShowcaseStatus = { listed: false } | { listed: true; title: string; url: string };
 ```
 
 Positive checks also compare the final site with the official Astro showcase. The showcase

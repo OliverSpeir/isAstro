@@ -1,163 +1,109 @@
-import { readResponseTextWithLimit } from "@modules/server/response";
+import { readTextWithLimit } from "@lib/check/read-text";
+import { cached, type TtlCache } from "@lib/check/ttl-cache";
 
-export const ASTRO_SHOWCASE_API_URL = "https://astro.build/api/showcase.json";
-
-export type ShowcaseSite = {
-	title: string;
-	url: string;
-	slug: string;
-};
-
+export type ShowcaseSite = { title: string; url: string; slug: string };
 export type ShowcaseStatus = { listed: false } | { listed: true; title: string; url: string };
 
-const SHOWCASE_CACHE_TTL_MS = 24 * 60 * 60_000;
-const SHOWCASE_FETCH_TIMEOUT_MS = 3_000;
-const MAX_SHOWCASE_BYTES = 2_000_000;
+const ASTRO_SHOWCASE_URL = "https://astro.build/api/showcase.json";
+const STARLIGHT_SHOWCASE_URL =
+	"https://raw.githubusercontent.com/withastro/starlight/main/docs/src/components/showcase-sites.astro";
+const DAY_MS = 24 * 60 * 60_000;
+const astroCache: TtlCache<ShowcaseSite[]> = new Map();
+const starlightCache: TtlCache<{ title: string; url: string }[]> = new Map();
 
-let cache: { expiresAt: number; sites: ShowcaseSite[] } | undefined;
-let inFlight: Promise<ShowcaseSite[]> | undefined;
-
-function hostnameForComparison(value: string | URL): string | undefined {
-	try {
-		const url = new URL(value);
-		if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname) {
-			return undefined;
-		}
-		return url.hostname
-			.toLowerCase()
-			.replace(/^www\./, "")
-			.replace(/\.$/, "");
-	} catch {
-		return undefined;
-	}
+export function getShowcaseSites(
+	fetch: typeof globalThis.fetch = globalThis.fetch,
+): Promise<ShowcaseSite[]> {
+	return cached(astroCache, "sites", DAY_MS, async () => {
+		const value: unknown = JSON.parse(await fetchListing(ASTRO_SHOWCASE_URL, 2_000_000, fetch));
+		const sites = Array.isArray(value) ? value.filter(isShowcaseSite) : [];
+		if (sites.length === 0) throw new Error("Astro showcase response contained no sites");
+		return sites;
+	});
 }
 
-function normalizedPathname(value: string | URL): string | undefined {
-	try {
-		const url = new URL(value);
-		if (!hostnameForComparison(url)) return undefined;
-		const normalized = url.pathname.replace(/\/{2,}/g, "/").replace(/\/$/, "");
-		return normalized || "/";
-	} catch {
-		return undefined;
-	}
+export function getStarlightShowcaseSites(fetch: typeof globalThis.fetch = globalThis.fetch) {
+	return cached(starlightCache, "sites", DAY_MS, async () => {
+		const sites = parseStarlightShowcase(
+			await fetchListing(STARLIGHT_SHOWCASE_URL, 500_000, fetch),
+		);
+		if (sites.length === 0) throw new Error("Starlight showcase source contained no sites");
+		return sites;
+	});
 }
 
-function matchesShowcasePath(target: string | URL, site: string | URL): boolean {
-	const targetPath = normalizedPathname(target);
-	const sitePath = normalizedPathname(site);
-	if (!targetPath || !sitePath) return false;
-	if (sitePath === "/") return true;
-	return targetPath === sitePath || targetPath.startsWith(`${sitePath}/`);
+/** Starlight's showcase is an Astro component of <Card title href /> tags. */
+export function parseStarlightShowcase(source: string): { title: string; url: string }[] {
+	return [...source.matchAll(/<Card\b[\s\S]*?\/>/g)].flatMap(([tag]) => {
+		const title = /\btitle=(['"])(.*?)\1/s.exec(tag)?.[2];
+		const url = /\bhref=(['"])(.*?)\1/s.exec(tag)?.[2];
+		return title && url && parseHttpUrl(url) ? [{ title, url }] : [];
+	});
 }
 
-function githubPagesProject(value: string | URL): string | undefined {
-	try {
-		const url = new URL(value);
-		const hostname = hostnameForComparison(url);
-		if (!hostname?.endsWith(".github.io")) return undefined;
-		return url.pathname.split("/").find(Boolean)?.toLowerCase() ?? "";
-	} catch {
-		return undefined;
+/** Finds the listing for `target`, which must be the final URL (never a pre-redirect one). */
+export function findListing(
+	target: string,
+	sites: readonly { title: string; url: string }[],
+): ShowcaseStatus {
+	const match = sites.find((site) => isSameSite(target, site.url));
+	return match ? { listed: true, title: match.title, url: match.url } : { listed: false };
+}
+
+/**
+ * Hostnames match ignoring "www.". A listing with a path only covers that path,
+ * and on github.io the first path segment identifies the project.
+ */
+function isSameSite(target: string, listing: string): boolean {
+	const targetUrl = parseHttpUrl(target);
+	const listingUrl = parseHttpUrl(listing);
+	if (!targetUrl || targetUrl.hostname !== listingUrl?.hostname) return false;
+	const targetPath = targetUrl.pathname.toLowerCase();
+	const listingPath = listingUrl.pathname.toLowerCase();
+	if (targetUrl.hostname.endsWith(".github.io")) {
+		return targetPath.split("/")[1] === listingPath.split("/")[1];
 	}
+	return (
+		listingPath === "/" || targetPath === listingPath || targetPath.startsWith(`${listingPath}/`)
+	);
+}
+
+function parseHttpUrl(value: string): URL | undefined {
+	const url = URL.canParse(value) ? new URL(value) : undefined;
+	if (!url || (url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname)
+		return undefined;
+	url.hostname = url.hostname
+		.toLowerCase()
+		.replace(/^www\./, "")
+		.replace(/\.$/, "");
+	url.pathname = url.pathname.replace(/\/{2,}/g, "/").replace(/(.)\/$/, "$1");
+	return url;
+}
+
+async function fetchListing(
+	url: string,
+	maxBytes: number,
+	fetch: typeof globalThis.fetch,
+): Promise<string> {
+	const init: RequestInit & { cf?: { cacheEverything: boolean; cacheTtl: number } } = {
+		signal: AbortSignal.timeout(3_000),
+		cf: { cacheEverything: true, cacheTtl: 86_400 },
+	};
+	const response = await fetch(url, init);
+	if (!response.ok) throw new Error(`${url} returned ${String(response.status)}`);
+	return readTextWithLimit(response, maxBytes);
 }
 
 function isShowcaseSite(value: unknown): value is ShowcaseSite {
-	if (!value || typeof value !== "object") return false;
-	const site = value as Record<string, unknown>;
 	return (
-		typeof site.title === "string" &&
-		typeof site.url === "string" &&
-		typeof site.slug === "string" &&
-		hostnameForComparison(site.url) !== undefined
+		typeof value === "object" &&
+		value !== null &&
+		"title" in value &&
+		typeof value.title === "string" &&
+		"slug" in value &&
+		typeof value.slug === "string" &&
+		"url" in value &&
+		typeof value.url === "string" &&
+		parseHttpUrl(value.url) !== undefined
 	);
-}
-
-async function fetchShowcaseSites(
-	fetchImplementation: typeof globalThis.fetch,
-): Promise<ShowcaseSite[]> {
-	const controller = new AbortController();
-	const timeout = setTimeout(() => {
-		controller.abort();
-	}, SHOWCASE_FETCH_TIMEOUT_MS);
-	try {
-		const requestInit: RequestInit & {
-			cf?: { cacheEverything: boolean; cacheTtl: number };
-		} = {
-			headers: { Accept: "application/json" },
-			signal: controller.signal,
-			cf: { cacheEverything: true, cacheTtl: 86_400 },
-		};
-		const response = await fetchImplementation(ASTRO_SHOWCASE_API_URL, requestInit);
-		if (!response.ok) throw new Error(`Astro showcase returned ${String(response.status)}`);
-
-		const body = await readResponseTextWithLimit(
-			response,
-			MAX_SHOWCASE_BYTES,
-			"Astro showcase response was too large",
-		);
-		const value: unknown = JSON.parse(body);
-		if (!Array.isArray(value)) throw new Error("Astro showcase response was invalid");
-
-		const sites = value.filter(isShowcaseSite);
-		if (sites.length === 0) throw new Error("Astro showcase response contained no sites");
-		return sites;
-	} finally {
-		clearTimeout(timeout);
-	}
-}
-
-export function findShowcaseSite(
-	targets: readonly (string | URL)[],
-	sites: readonly ShowcaseSite[],
-): ShowcaseSite | undefined {
-	const targetHostnames = new Set(
-		targets.map(hostnameForComparison).filter((hostname): hostname is string => Boolean(hostname)),
-	);
-	if (targetHostnames.size === 0) return undefined;
-	return sites.find((site) => {
-		const hostname = hostnameForComparison(site.url);
-		if (hostname === undefined || !targetHostnames.has(hostname)) return false;
-
-		// A hostname can contain multiple unrelated projects. Match non-root
-		// listing paths, with first-segment identity for GitHub Pages projects.
-		return targets.some((target) => {
-			if (hostnameForComparison(target) !== hostname) return false;
-			if (hostname.endsWith(".github.io")) {
-				return githubPagesProject(target) === githubPagesProject(site.url);
-			}
-			return matchesShowcasePath(target, site.url);
-		});
-	});
-}
-
-export async function getShowcaseSites(
-	fetchImplementation: typeof globalThis.fetch = globalThis.fetch,
-): Promise<ShowcaseSite[]> {
-	const now = Date.now();
-	if (cache && cache.expiresAt > now) return cache.sites;
-	if (inFlight) return inFlight;
-
-	inFlight = fetchShowcaseSites(fetchImplementation).then((sites) => {
-		cache = { expiresAt: Date.now() + SHOWCASE_CACHE_TTL_MS, sites };
-		return sites;
-	});
-	try {
-		return await inFlight;
-	} finally {
-		inFlight = undefined;
-	}
-}
-
-export function clearShowcaseCache(): void {
-	cache = undefined;
-	inFlight = undefined;
-}
-
-export async function getShowcaseStatus(
-	targets: readonly (string | URL)[],
-	fetchImplementation?: typeof globalThis.fetch,
-): Promise<ShowcaseStatus> {
-	const match = findShowcaseSite(targets, await getShowcaseSites(fetchImplementation));
-	return match ? { listed: true, title: match.title, url: match.url } : { listed: false };
 }

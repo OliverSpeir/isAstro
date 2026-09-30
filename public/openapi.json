@@ -37,41 +37,21 @@
         ],
         "responses": {
           "200": {
-            "description": "Detection completed",
+            "description": "The check ran. Inspect verdict.status: a site that blocked us or was down is still a 200.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DetectionResult"
+                  "$ref": "#/components/schemas/Check"
                 }
               }
             }
           },
           "400": {
-            "description": "The URL query parameter is missing or invalid",
+            "description": "The url query parameter is missing or not a public website URL",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "502": {
-            "description": "The target website could not be checked",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DetectionFailure"
-                }
-              }
-            }
-          },
-          "504": {
-            "description": "The target website did not respond before the deadline",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DetectionFailure"
                 }
               }
             }
@@ -91,82 +71,223 @@
   },
   "components": {
     "schemas": {
-      "DetectionResult": {
+      "Check": {
         "type": "object",
         "additionalProperties": false,
         "required": [
           "url",
-          "lastFetchedUrl",
-          "isAstro",
-          "isStarlight",
-          "mechanism"
+          "finalUrl",
+          "verdict",
+          "infrastructure"
         ],
         "properties": {
           "url": {
             "type": "string",
             "format": "uri"
           },
-          "lastFetchedUrl": {
+          "finalUrl": {
             "type": "string",
-            "format": "uri"
+            "format": "uri",
+            "description": "URL after redirects"
           },
-          "isAstro": {
-            "type": "boolean"
-          },
-          "isStarlight": {
-            "type": "boolean"
-          },
-          "mechanism": {
-            "type": "string"
-          },
-          "astroVersion": {
-            "type": "string"
-          },
-          "starlightVersion": {
-            "type": "string"
+          "verdict": {
+            "$ref": "#/components/schemas/Verdict"
           },
           "infrastructure": {
-            "type": "array",
-            "description": "Edge and hosting providers detected for an Astro site. Inferred providers include a confidence field.",
-            "items": {
-              "$ref": "#/components/schemas/InfrastructureProvider"
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "edge",
+              "host"
+            ],
+            "properties": {
+              "edge": {
+                "$ref": "#/components/schemas/Layer"
+              },
+              "host": {
+                "$ref": "#/components/schemas/Layer"
+              }
             }
           },
           "showcase": {
-            "$ref": "#/components/schemas/ShowcaseStatus"
-          },
-          "starlightShowcase": {
-            "$ref": "#/components/schemas/ShowcaseStatus"
+            "type": "object",
+            "description": "Only present for Astro sites",
+            "additionalProperties": false,
+            "properties": {
+              "astro": {
+                "$ref": "#/components/schemas/ShowcaseStatus"
+              },
+              "starlight": {
+                "$ref": "#/components/schemas/ShowcaseStatus"
+              }
+            }
           }
         }
       },
-      "InfrastructureProvider": {
+      "Verdict": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "starlight",
+              "evidence"
+            ],
+            "properties": {
+              "status": {
+                "const": "astro"
+              },
+              "starlight": {
+                "type": "boolean"
+              },
+              "astroVersion": {
+                "type": "string"
+              },
+              "starlightVersion": {
+                "type": "string"
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "const": "not-astro"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "by"
+            ],
+            "properties": {
+              "status": {
+                "const": "blocked"
+              },
+              "by": {
+                "enum": [
+                  "cloudflare",
+                  "vercel",
+                  "sgcaptcha"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "reason"
+            ],
+            "properties": {
+              "status": {
+                "const": "unreachable"
+              },
+              "reason": {
+                "enum": [
+                  "timeout",
+                  "network-error",
+                  "http-error",
+                  "not-html",
+                  "empty-body",
+                  "too-large",
+                  "too-many-redirects",
+                  "disallowed-redirect"
+                ]
+              },
+              "httpStatus": {
+                "type": "integer"
+              }
+            }
+          }
+        ]
+      },
+      "Layer": {
+        "description": "\"hidden\" means a CDN answered, so the origin behind it is not observable.",
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "providers"
+            ],
+            "properties": {
+              "status": {
+                "const": "identified"
+              },
+              "providers": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Provider"
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "const": "hidden"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "const": "unknown"
+              }
+            }
+          }
+        ]
+      },
+      "Provider": {
         "type": "object",
         "additionalProperties": false,
         "required": [
           "name",
-          "layer",
+          "confidence",
           "evidence"
         ],
         "properties": {
           "name": {
             "type": "string"
           },
-          "layer": {
-            "type": "string",
+          "confidence": {
             "enum": [
-              "edge",
-              "hosting"
+              "confirmed",
+              "likely"
             ]
           },
           "evidence": {
-            "type": "string"
-          },
-          "confidence": {
-            "type": "string",
-            "enum": [
-              "likely"
-            ]
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -180,7 +301,6 @@
             ],
             "properties": {
               "listed": {
-                "type": "boolean",
                 "const": false
               }
             }
@@ -195,7 +315,6 @@
             ],
             "properties": {
               "listed": {
-                "type": "boolean",
                 "const": true
               },
               "title": {
@@ -220,37 +339,6 @@
             "type": "string"
           },
           "url": {
-            "type": "string"
-          }
-        }
-      },
-      "DetectionFailure": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "url",
-          "isAstro",
-          "isStarlight",
-          "mechanism"
-        ],
-        "properties": {
-          "url": {
-            "type": "string",
-            "format": "uri"
-          },
-          "lastFetchedUrl": {
-            "type": "string",
-            "format": "uri"
-          },
-          "isAstro": {
-            "type": "boolean",
-            "const": false
-          },
-          "isStarlight": {
-            "type": "boolean",
-            "const": false
-          },
-          "mechanism": {
             "type": "string"
           }
         }
