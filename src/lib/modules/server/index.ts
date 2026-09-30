@@ -246,6 +246,31 @@ function isRedirectStatus(status: number): boolean {
 }
 
 /**
+ * Bot walls (e.g. Cloudflare managed challenges) usually answer with 403/503,
+ * so they must be recognised before the response is rejected as an HTTP error.
+ */
+async function isBotChallengeResponse(response: Response, signal: AbortSignal): Promise<boolean> {
+	if (response.headers.get("cf-mitigated")?.toLowerCase() === "challenge") {
+		await response.body?.cancel().catch(() => undefined);
+		return true;
+	}
+	if (!response.body) return false;
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	let prefix = "";
+	try {
+		while (prefix.length < BOT_CHALLENGE_SCAN_LIMIT) {
+			const { done, value } = await withAbort(reader.read(), signal);
+			if (done) break;
+			prefix += decoder.decode(value, { stream: true });
+		}
+		return isBotChallenge(prefix);
+	} finally {
+		cancelReader(reader);
+	}
+}
+
+/**
  * Detects Astro from an uncached request. Pass an options object to make the
  * request limits and fetch implementation explicit in tests or other runtimes.
  */
@@ -323,6 +348,9 @@ export async function isAstroWebsite(
 			}
 
 			if (!response.ok) {
+				if (await isBotChallengeResponse(response, controller.signal)) {
+					throw new CustomError("Bot challenge detected", originalUrl, lastFetchedUrl);
+				}
 				throw new CustomError(
 					`Server responded with status: ${String(response.status)}`,
 					originalUrl,

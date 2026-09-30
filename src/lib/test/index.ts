@@ -684,6 +684,30 @@ void test("rejects final HTTP errors and non-HTML responses", async () => {
 	);
 });
 
+void test("reports bot challenges served with an error status as blocked", async () => {
+	await assert.rejects(
+		isAstroWebsite(targetUrl, {
+			fetch: createSequenceFetch([
+				createMockResponse(["<title>Just a moment...</title>"], {
+					status: 403,
+					headers: { "cf-mitigated": "challenge", server: "cloudflare" },
+				}),
+			]),
+		}),
+		(error: unknown) => error instanceof CustomError && error.message === "Bot challenge detected",
+	);
+	await assert.rejects(
+		isAstroWebsite(targetUrl, {
+			fetch: createSequenceFetch([
+				createMockResponse(['<script src="/cdn-cgi/challenge-platform/h/b/orchestrate"></script>'], {
+					status: 503,
+				}),
+			]),
+		}),
+		(error: unknown) => error instanceof CustomError && error.message === "Bot challenge detected",
+	);
+});
+
 void test("enforces the response byte limit", async () => {
 	await assert.rejects(
 		isAstroWebsite(targetUrl, {
