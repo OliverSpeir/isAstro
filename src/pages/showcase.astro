@@ -46,13 +46,13 @@ const description = "Quickly search sites listed in the official Astro showcase.
 		const results = document.getElementById("showcase-results");
 		let sites: SearchableSite[] = [];
 
-			function searchableSite(site: ShowcaseSite): SearchableSite | undefined {
-				try {
-					const url = new URL(site.url);
-					if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname) {
-						return undefined;
-					}
-					const hostname = url.hostname.replace(/^www\./, "");
+		function searchableSite(site: ShowcaseSite): SearchableSite | undefined {
+			try {
+				const url = new URL(site.url);
+				if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname) {
+					return undefined;
+				}
+				const hostname = url.hostname.replace(/^www\./, "");
 				return {
 					...site,
 					hostname,

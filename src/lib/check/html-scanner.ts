@@ -59,7 +59,7 @@ const TAG_MARKERS: readonly (readonly [RegExp, string])[] = [
 ];
 const STYLE_MARKERS: readonly (readonly [RegExp, string])[] = [
 	[/:where\(\.astro-[a-zA-Z0-9]{8}\)/, "scoped style selector"],
-	[/\[data-astro-cid-[a-zA-Z0-9]+\]/, "scoped style selector"],
+	[/\[data-astro-[\w-]+/, "data-astro-* style selector"],
 ];
 
 export function createPageScanner(baseUrl: string) {
@@ -199,8 +199,12 @@ export function createPageScanner(baseUrl: string) {
 			const tagEnd = findTagEnd(input, tagStart);
 			if (tagEnd === -1) {
 				const partial = input.slice(tagStart);
-				carry = partial.length <= MAX_CARRY_LENGTH ? partial : "";
-				break;
+				if (partial.length <= MAX_CARRY_LENGTH) {
+					carry = partial;
+					break;
+				}
+				// Oversized tag (e.g. an island's inline props): judge it by its opening, then drop it.
+				return handleTag(partial);
 			}
 			const decided = handleTag(input.slice(tagStart, tagEnd + 1));
 			if (decided) return decided;

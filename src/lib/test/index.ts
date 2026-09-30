@@ -100,6 +100,29 @@ void test("finds body markers in minified pages without </head>, and hides the h
 		evidence: ["scoped astro-* class"],
 	});
 	assert.deepEqual(result.infrastructure.host, { status: "hidden" });
+
+	// Islands inline their props, so a single tag can span many network chunks.
+	const props = `props="${"x".repeat(40_000)}"`;
+	const island = await check("https://island.example", {
+		"https://island.example/": {
+			chunks: [
+				"<body><astro-island uid=1 ",
+				props.slice(0, 20_000),
+				props.slice(20_000),
+				"></astro-island>",
+			],
+		},
+	});
+	assert.equal(island.verdict.status, "astro");
+
+	const viewTransitions = await check("https://transitions.example", {
+		"https://transitions.example/": {
+			chunks: [
+				"<html><head><style>[data-astro-transition-scope]{animation:none}</style></head><body></body>",
+			],
+		},
+	});
+	assert.equal(viewTransitions.verdict.status, "astro");
 });
 
 void test("ignores Astro-looking text that isn't real markup", async () => {

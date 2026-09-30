@@ -123,7 +123,7 @@ const spec = {
 					object(["status"], { status: { const: "not-astro" } }),
 					object(["status", "by"], {
 						status: { const: "blocked" },
-						by: { enum: ["cloudflare", "vercel", "sgcaptcha"] },
+						by: { enum: ["cloudflare", "vercel", "sgcaptcha", "unknown"] },
 					}),
 					object(["status", "reason"], {
 						status: { const: "unreachable" },

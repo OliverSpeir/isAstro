@@ -40,7 +40,7 @@ input returns `400`.
 	verdict:
 		| { status: "astro"; starlight: boolean; astroVersion?: string; starlightVersion?: string; evidence: string[] }
 		| { status: "not-astro" }
-		| { status: "blocked"; by: "cloudflare" | "vercel" | "sgcaptcha" }
+		| { status: "blocked"; by: "cloudflare" | "vercel" | "sgcaptcha" | "unknown" }
 		| { status: "unreachable"; reason: "timeout" | "network-error" | "http-error" | "not-html" | "empty-body" | "too-large" | "too-many-redirects" | "disallowed-redirect"; httpStatus?: number };
 	infrastructure: { edge: Layer; host: Layer };
 	showcase?: { astro?: ShowcaseStatus; starlight?: ShowcaseStatus }; // Astro sites only

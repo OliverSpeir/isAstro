@@ -155,9 +155,11 @@ function botWallFromHeaders(headers: Headers): BotWall | undefined {
 }
 
 function botWallFromBody(text: string): BotWall | undefined {
-	if (/_cf_chl_opt|<title>Just a moment\.\.\.<\/title>/i.test(text)) return "cloudflare";
+	if (text.includes("_cf_chl_opt")) return "cloudflare";
 	if (/Vercel Security Checkpoint/i.test(text)) return "vercel";
 	if (/\.well-known\/sgcaptcha/i.test(text)) return "sgcaptcha";
+	// Lookalike interstitials (e.g. WordPress plugins) copy Cloudflare's wording.
+	if (/<title>(Just a moment|Checking your browser)/i.test(text)) return "unknown";
 	return undefined;
 }
 

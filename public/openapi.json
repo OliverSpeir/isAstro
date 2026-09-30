@@ -182,7 +182,8 @@
                 "enum": [
                   "cloudflare",
                   "vercel",
-                  "sgcaptcha"
+                  "sgcaptcha",
+                  "unknown"
                 ]
               }
             }

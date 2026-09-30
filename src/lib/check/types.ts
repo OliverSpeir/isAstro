@@ -10,7 +10,7 @@ export type Verdict =
 			evidence: string[];
 	  }
 	| { status: "not-astro" }
-	| { status: "blocked"; by: "cloudflare" | "vercel" | "sgcaptcha" }
+	| { status: "blocked"; by: "cloudflare" | "vercel" | "sgcaptcha" | "unknown" }
 	| { status: "unreachable"; reason: UnreachableReason; httpStatus?: number };
 
 export type UnreachableReason =
