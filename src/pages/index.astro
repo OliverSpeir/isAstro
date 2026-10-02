@@ -226,14 +226,12 @@ const showcaseLinks = {
 											{verdictDetail(verdict)}
 											{verdict.status === "unreachable" && verdict.cloudflareError && (
 												<p class="detail-note">
-													{verdict.cloudflareError === 1016 &&
-														"Some sites on Cloudflare's partial DNS setup give this error to checkers running on Cloudflare, like this one. "}
 													<a
 														href={cloudflareErrorUrl(verdict.cloudflareError)}
 														target="_blank"
 														rel="noopener noreferrer"
 													>
-														Cloudflare's explanation
+														Cloudflare's explanation of error {verdict.cloudflareError}
 													</a>
 												</p>
 											)}
@@ -746,8 +744,10 @@ const showcaseLinks = {
 
 	.detail-note {
 		margin: 0.25rem 0 0;
-		font-size: 0.875em;
-		opacity: 0.8;
+	}
+
+	.detail-note a {
+		color: var(--text);
 	}
 
 	.result-details dd {
