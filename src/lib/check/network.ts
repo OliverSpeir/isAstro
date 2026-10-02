@@ -18,14 +18,26 @@ const SOCKET_REFUSED = /cannot connect to the specified address/i;
 const CLOUDFLARE_INJECTED_HEADERS = ["server", "cf-ray", "cf-cache-status"];
 
 type SocketResult = { status: number; headers: Headers } | "refused" | undefined;
-type Hop = { onCloudflare: boolean; socket: Promise<SocketResult>; status?: number };
+type Hop = {
+	addresses: string[];
+	onCloudflare: boolean;
+	socket: Promise<SocketResult>;
+	status?: number;
+};
+
+/** What to report about the final URL's infrastructure. */
+export type Origin = { headers: Headers; cloudflareAddress?: string | undefined };
 
 /**
  * Pages always come through fetch(), which sites accept most reliably. But
  * fetch() inside Cloudflare can rewrite `server` and add `cf-ray`, so a raw
  * socket reads each URL's response head in parallel, purely to report the
- * headers the server really sent. Sockets can't reach Cloudflare's network;
- * for those sites Cloudflare really is in front, so fetch()'s headers stand.
+ * headers the server really sent.
+ *
+ * Workers refuse sockets to Cloudflare's network. That covers its published
+ * ranges, and also addresses it serves for others (e.g. Render, WP Engine).
+ * A refused socket to a URL that fetch() loaded fine is therefore a site
+ * behind Cloudflare. (TLS failures raise the same error, but fail fetch() too.)
  */
 export function createPageFetch({ fetch, connect }: Network) {
 	const hops = new Map<string, Hop>();
@@ -37,6 +49,7 @@ export function createPageFetch({ fetch, connect }: Network) {
 
 		const onCloudflare = addresses.some(isCloudflareAddress);
 		const hop: Hop = {
+			addresses,
 			onCloudflare,
 			socket:
 				connect && !onCloudflare
@@ -51,18 +64,24 @@ export function createPageFetch({ fetch, connect }: Network) {
 		return response;
 	};
 
-	/** The headers to report for `url`: the socket's when it saw the same response, else fetch()'s. */
-	async function originHeaders(url: string, fetched: Headers): Promise<Headers> {
+	/** Headers to report for `url` (the socket's when it saw the same response), and its Cloudflare address if any. */
+	async function origin(url: string, fetched: Headers): Promise<Origin> {
 		const hop = hops.get(url);
-		if (!connect || !hop || hop.onCloudflare) return fetched;
+		if (!hop) return { headers: fetched };
+		const cloudflareAddress = hop.addresses.find(isCloudflareAddress);
+		if (!connect || hop.onCloudflare) return { headers: fetched, cloudflareAddress };
 		const grace = new Promise<undefined>((resolve) => setTimeout(resolve, SOCKET_GRACE_MS));
 		const socket = await Promise.race([hop.socket, grace]);
-		if (socket === "refused") return fetched;
-		if (socket && socket.status === hop.status) return socket.headers;
-		return withoutHeaders(fetched, CLOUDFLARE_INJECTED_HEADERS);
+		if (socket === "refused" && hop.status !== undefined) {
+			return { headers: fetched, cloudflareAddress: hop.addresses[0] };
+		}
+		if (socket && socket !== "refused" && socket.status === hop.status) {
+			return { headers: socket.headers };
+		}
+		return { headers: withoutHeaders(fetched, CLOUDFLARE_INJECTED_HEADERS) };
 	}
 
-	return { fetchPage, originHeaders };
+	return { fetchPage, origin };
 }
 
 function withoutHeaders(source: Headers, names: string[]): Headers {

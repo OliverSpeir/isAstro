@@ -22,6 +22,8 @@ export async function socketHead(
 	init.signal.addEventListener("abort", close, { once: true });
 
 	try {
+		// Workers refuse some connections here, before any bytes are sent.
+		await socket.opened;
 		const requestHead = [
 			`GET ${target.pathname}${target.search} HTTP/1.1`,
 			`Host: ${target.host}`,

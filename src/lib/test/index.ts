@@ -63,6 +63,9 @@ function fakeNetwork(pages: Record<string, Page>, requested: string[] = []): Net
 	};
 
 	const connect: Connect = ({ hostname }, { secureTransport }) => {
+		const refused = Object.entries(pages).some(
+			([url, page]) => new URL(url).hostname === hostname && page.refusesSockets,
+		);
 		let receiveRequest: (request: string) => void = () => undefined;
 		const request = new Promise<string>((resolve) => (receiveRequest = resolve));
 		return {
@@ -75,11 +78,8 @@ function fakeNetwork(pages: Record<string, Page>, requested: string[] = []): Net
 				async start(controller) {
 					const path = (await request).split(" ")[1] ?? "/";
 					const page = pages[`${secureTransport === "on" ? "https" : "http"}://${hostname}${path}`];
-					if (!page || page.refusesSockets) {
-						const message = page
-							? "proxy request failed, cannot connect to the specified address"
-							: "connection refused";
-						controller.error(new Error(message));
+					if (!page) {
+						controller.error(new Error("connection refused"));
 						return;
 					}
 					const { status, headers } = page.socketResponse ?? {
@@ -95,6 +95,10 @@ function fakeNetwork(pages: Record<string, Page>, requested: string[] = []): Net
 					controller.close();
 				},
 			}),
+			// Workers reject sockets to Cloudflare's network before connecting.
+			opened: refused
+				? Promise.reject(new Error("proxy request failed, cannot connect to the specified address"))
+				: Promise.resolve({}),
 			close: () => Promise.resolve(),
 		};
 	};
@@ -258,7 +262,11 @@ void test("reports bot walls as blocked while keeping the infrastructure they re
 		{
 			name: "Cloudflare",
 			role: "cdn",
-			evidence: ["address 104.16.132.229", "cf-ray: abc-EWR", "server: cloudflare"],
+			evidence: [
+				"address 104.16.132.229 on Cloudflare's network",
+				"cf-ray: abc-EWR",
+				"server: cloudflare",
+			],
 		},
 	]);
 
@@ -349,19 +357,19 @@ void test("reports infrastructure as cited facts from provider-specific signals 
 	});
 	assert.deepEqual(githubDocs.infrastructure.providers, []);
 
-	// Render serves through Cloudflare from its own addresses, which sockets refuse.
+	// Render serves through Cloudflare from its own addresses: outside Cloudflare's
+	// published ranges, but Workers still refuse sockets to them.
 	const render = await check("https://render-site.example", {
 		"https://render-site.example/": {
 			refusesSockets: true,
-			headers: { "cf-ray": "abc-LHR", "rndr-id": "4b1" },
+			headers: { "rndr-id": "4b1" },
 			chunks: ['<meta name="generator" content="Astro">'],
 		},
 	});
 	assert.equal(render.verdict.status, "astro");
-	assert.deepEqual(
-		render.infrastructure.providers.map((provider) => provider.name),
-		["Cloudflare", "Render"],
-	);
+	const [cdn, hosting] = render.infrastructure.providers;
+	assert.deepEqual(cdn?.evidence[0], "address 93.184.215.14 on Cloudflare's network");
+	assert.deepEqual(hosting, { name: "Render", role: "hosting", evidence: ["rndr-id: 4b1"] });
 
 	// The socket asks for an uncompressed page, so its content-length can exceed the
 	// size cap; only fetch()'s headers decide how the page is read.

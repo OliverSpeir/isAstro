@@ -6,6 +6,7 @@ declare module "cloudflare:sockets" {
 	): {
 		readable: ReadableStream<Uint8Array>;
 		writable: WritableStream<Uint8Array>;
+		opened: Promise<unknown>;
 		close(): Promise<void>;
 	};
 }

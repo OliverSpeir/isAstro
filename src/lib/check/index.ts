@@ -1,6 +1,5 @@
 import { findListing, getShowcaseSites, getStarlightShowcaseSites } from "@lib/showcase";
 import { detect } from "./detect";
-import { resolveAddresses } from "./dns";
 import { detectInfrastructure } from "./infrastructure";
 import { createPageFetch, loadConnect, type Network } from "./network";
 import { cached, type TtlCache } from "./ttl-cache";
@@ -53,12 +52,10 @@ async function runCheck(url: string, network: Network): Promise<Check> {
 	const starlightSites = getStarlightShowcaseSites(fetch);
 	for (const prefetch of [astroSites, starlightSites]) prefetch.catch(() => undefined);
 
-	const { fetchPage, originHeaders } = createPageFetch(network);
+	const { fetchPage, origin } = createPageFetch(network);
 	const { finalUrl, verdict, headers } = await detect(url, fetchPage);
-	const [reportedHeaders, addresses, astroListing, starlightListing] = await Promise.all([
-		headers ? originHeaders(finalUrl, headers) : new Headers(),
-		// Already resolved (and cached) while fetching, unless the check failed before that.
-		settled(resolveAddresses(new URL(finalUrl).hostname, fetch)),
+	const [reported, astroListing, starlightListing] = await Promise.all([
+		origin(finalUrl, headers ?? new Headers()),
 		verdict.status === "astro" ? settled(astroSites) : undefined,
 		verdict.status === "astro" && verdict.starlight ? settled(starlightSites) : undefined,
 	]);
@@ -67,7 +64,7 @@ async function runCheck(url: string, network: Network): Promise<Check> {
 		url,
 		finalUrl,
 		verdict,
-		infrastructure: detectInfrastructure(reportedHeaders, finalUrl, addresses ?? []),
+		infrastructure: detectInfrastructure(reported, finalUrl),
 		...(verdict.status === "astro" && {
 			showcase: {
 				...(astroListing && { astro: findListing(finalUrl, astroListing) }),
