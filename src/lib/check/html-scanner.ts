@@ -18,8 +18,8 @@ export type ScanResult =
 	| Extract<Verdict, { status: "astro" | "not-astro" }>
 	| { status: "meta-refresh"; location: string };
 
-/** [kind, pattern, describe]: the first match of each kind is cited as evidence. */
-type Marker = readonly [string, RegExp, (match: RegExpExecArray) => string];
+/** [label, pattern]: each label is reported once as evidence. */
+type Marker = readonly [string, RegExp];
 
 type Mode =
 	| { name: "text" }
@@ -58,34 +58,21 @@ const GENERATOR_CONTENT = /^(Astro|Starlight)(?:\s+(.+))?$/i;
 const META_REFRESH_CONTENT = /^\s*\d+(?:\.\d+)?\s*[;,]\s*url\s*=\s*(.*?)\s*$/i;
 
 const TAG_MARKERS: readonly Marker[] = [
-	["attribute", /\s(data-astro-[\w-]+)/, (match) => `${match[1] ?? ""} attribute`],
-	[
-		"class",
-		/\sclass\s*=\s*(?:"[^"]*|'[^']*|[^\s>]*)\b(astro-[a-zA-Z0-9]{8})\b/,
-		(match) => `class ${match[1] ?? ""}`,
-	],
-	[
-		"asset",
-		/["'=\s,(]((?:[^"'\s>(),=]*\/)?_astro\/[^"'\s>(),]+)/,
-		(match) => `asset ${(match[1] ?? "").slice(0, 80)}`,
-	],
+	["data-astro-* attribute", /\sdata-astro-[\w-]+/],
+	["scoped astro-* class", /\sclass\s*=\s*(?:"[^"]*|'[^']*|[^\s>]*)\bastro-[a-zA-Z0-9]{8}\b/],
+	["_astro/ asset", /["'=\s,(](?:[^"'\s>(),=]*\/)?_astro\//],
 ];
 const STYLE_MARKERS: readonly Marker[] = [
-	[
-		"style",
-		/:where\(\.astro-[a-zA-Z0-9]{8}\)|\[data-astro-[\w-]+[^\]]{0,40}\]/,
-		(match) => `style selector ${match[0]}`,
-	],
+	["scoped style selector", /:where\(\.astro-[a-zA-Z0-9]{8}\)|\[data-astro-[\w-]+/],
 ];
 // Only inline module scripts: Astro emits its scripts that way, while frameworks
 // like Next.js stream page text (which may quote Astro code) in classic scripts.
 const MODULE_SCRIPT_MARKERS: readonly Marker[] = [
 	[
-		"script",
-		/["'`](astro:(?:page-load|after-swap|before-swap|before-preparation|after-preparation))["'`]/,
-		(match) => `module script uses ${match[1] ?? ""} event`,
+		"astro:* event listener",
+		/["'`]astro:(?:page-load|after-swap|before-swap|before-preparation|after-preparation)["'`]/,
 	],
-	["server-island", /\/_server-islands\//, () => "module script fetches /_server-islands/"],
+	["server island", /\/_server-islands\//],
 ];
 
 export function createPageScanner(baseUrl: string) {
@@ -95,14 +82,10 @@ export function createPageScanner(baseUrl: string) {
 	let rawTextTail = "";
 	let astroGenerator: { version?: string } | undefined;
 	let starlightGenerator: { version?: string } | undefined;
-	const markers = new Map<string, string>();
+	const markers = new Set<string>();
 
 	function findMarkers(text: string, candidates: readonly Marker[]): void {
-		for (const [kind, pattern, describe] of candidates) {
-			if (markers.has(kind)) continue;
-			const match = pattern.exec(text);
-			if (match) markers.set(kind, describe(match));
-		}
+		for (const [label, pattern] of candidates) if (pattern.test(text)) markers.add(label);
 	}
 
 	function astroResult(): ScanResult | undefined {
@@ -111,7 +94,7 @@ export function createPageScanner(baseUrl: string) {
 		if (astroGenerator) evidence.push(generatorEvidence("Astro", astroGenerator.version));
 		if (starlightGenerator)
 			evidence.push(generatorEvidence("Starlight", starlightGenerator.version));
-		evidence.push(...markers.values());
+		evidence.push(...markers);
 		return {
 			status: "astro",
 			starlight: Boolean(starlightGenerator),
@@ -157,8 +140,7 @@ export function createPageScanner(baseUrl: string) {
 			};
 			rawTextTail = "";
 		}
-		if (name.startsWith("astro-") && !markers.has("element"))
-			markers.set("element", `<${name}> element`);
+		if (name.startsWith("astro-")) markers.add("astro-* element");
 		findMarkers(tag, TAG_MARKERS);
 		return inHead ? undefined : astroResult();
 	}

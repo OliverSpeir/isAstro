@@ -66,7 +66,7 @@ void test("reads versions from split, reordered generator tags and reports showc
 		evidence: [
 			'generator meta tag "Astro v5.1"',
 			'generator meta tag "Starlight v0.30"',
-			"asset /_astro/index.css",
+			"_astro/ asset",
 		],
 	});
 	assert.deepEqual(result.showcase, {
@@ -88,7 +88,7 @@ void test("finds body markers in minified pages without </head>", async () => {
 	assert.deepEqual(result.verdict, {
 		status: "astro",
 		starlight: false,
-		evidence: ["class astro-j7pv25f6"],
+		evidence: ["scoped astro-* class"],
 	});
 
 	// Islands inline their props, so a single tag can span many network chunks.
@@ -106,7 +106,7 @@ void test("finds body markers in minified pages without </head>", async () => {
 	assert.deepEqual(island.verdict, {
 		status: "astro",
 		starlight: false,
-		evidence: ["<astro-island> element"],
+		evidence: ["astro-* element"],
 	});
 
 	const viewTransitions = await check("https://transitions.example", {
@@ -130,7 +130,7 @@ void test("finds body markers in minified pages without </head>", async () => {
 	assert.deepEqual(clientRouter.verdict, {
 		status: "astro",
 		starlight: false,
-		evidence: ["module script uses astro:before-swap event"],
+		evidence: ["astro:* event listener"],
 	});
 });
 
