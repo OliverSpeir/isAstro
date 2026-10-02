@@ -66,7 +66,6 @@ void test("reads versions from split, reordered generator tags and reports showc
 		evidence: [
 			'generator meta tag "Astro v5.1"',
 			'generator meta tag "Starlight v0.30"',
-			"_astro/ asset",
 		],
 	});
 	assert.deepEqual(result.showcase, {

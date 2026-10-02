@@ -94,7 +94,8 @@ export function createPageScanner(baseUrl: string) {
 		if (astroGenerator) evidence.push(generatorEvidence("Astro", astroGenerator.version));
 		if (starlightGenerator)
 			evidence.push(generatorEvidence("Starlight", starlightGenerator.version));
-		evidence.push(...markers);
+		// A generator tag is conclusive on its own; markers are only the fallback evidence.
+		if (evidence.length === 0) evidence.push(...markers);
 		return {
 			status: "astro",
 			starlight: Boolean(starlightGenerator),
