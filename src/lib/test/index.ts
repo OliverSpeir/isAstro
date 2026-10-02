@@ -1,29 +1,29 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { checkWebsiteInput, PROVIDER_NAMES, type Check, type Network } from "@lib/check";
-import type { Connect } from "@lib/check/socket-fetch";
+import type { Connect } from "@lib/check/socket-head";
 import { providerIconIds } from "@lib/provider-icons";
 
 type Page = {
 	chunks?: string[];
 	status?: number;
 	headers?: Record<string, string>;
-	/** The host's DNS answer. Defaults to a non-Cloudflare address, so the page is served over a socket. */
+	/** The host's DNS answer. Defaults to a non-Cloudflare address. */
 	address?: string;
+	/** On Cloudflare's network outside its published ranges (e.g. Render): sockets are refused. */
+	refusesSockets?: boolean;
+	/** What a raw socket gets instead of the page, e.g. a firewall blocking Cloudflare's socket egress. */
+	socketResponse?: { status: number; headers: Record<string, string> };
 };
 
 const DEFAULT_ADDRESS = "93.184.215.14";
 
 /**
- * A fake internet: `pages` by URL, plus fixed DNS and showcase services. Pages
- * are served as raw chunked HTTP/1.1 over a fake socket, except on Cloudflare
- * addresses, which (as on Workers) only fetch() can reach.
+ * A fake internet: `pages` by URL, plus fixed DNS and showcase services. Like
+ * fetch() inside Cloudflare, page responses get `server: cloudflare` and a
+ * `cf-ray`, unless the site really is on Cloudflare. Sockets see the real head.
  */
 function fakeNetwork(pages: Record<string, Page>, requested: string[] = []): Network {
-	const pageAt = (url: string) => {
-		requested.push(url);
-		return pages[url];
-	};
 	const fetch: typeof globalThis.fetch = (input) => {
 		const url = new URL(input instanceof Request ? input.url : input.toString());
 		if (url.hostname === "cloudflare-dns.com") {
@@ -45,7 +45,8 @@ function fakeNetwork(pages: Record<string, Page>, requested: string[] = []): Net
 				new Response('<Card title="Docs" href="https://docs.example/" thumbnail="x.png" />'),
 			);
 		}
-		const page = pageAt(url.toString());
+		requested.push(url.toString());
+		const page = pages[url.toString()];
 		if (!page) return Promise.reject(new TypeError(`fetch failed: ${url.toString()}`));
 		const chunks = [...(page.chunks ?? [])];
 		const body = new ReadableStream<Uint8Array>({
@@ -55,7 +56,9 @@ function fakeNetwork(pages: Record<string, Page>, requested: string[] = []): Net
 				else controller.enqueue(new TextEncoder().encode(chunk));
 			},
 		});
-		const headers = { "content-type": "text/html", ...page.headers };
+		const headers = new Headers({ "content-type": "text/html", ...page.headers });
+		headers.set("server", "cloudflare");
+		if (!headers.has("cf-ray")) headers.set("cf-ray", "injected-LHR");
 		return Promise.resolve(new Response(body, { status: page.status ?? 200, headers }));
 	};
 
@@ -71,14 +74,24 @@ function fakeNetwork(pages: Record<string, Page>, requested: string[] = []): Net
 			readable: new ReadableStream({
 				async start(controller) {
 					const path = (await request).split(" ")[1] ?? "/";
-					const page = pageAt(
-						`${secureTransport === "on" ? "https" : "http"}://${hostname}${path}`,
-					);
-					if (!page) {
-						controller.error(new Error("connection refused"));
+					const page = pages[`${secureTransport === "on" ? "https" : "http"}://${hostname}${path}`];
+					if (!page || page.refusesSockets) {
+						const message = page
+							? "proxy request failed, cannot connect to the specified address"
+							: "connection refused";
+						controller.error(new Error(message));
 						return;
 					}
-					for (const bytes of httpResponse(page)) controller.enqueue(bytes);
+					const { status, headers } = page.socketResponse ?? {
+						status: page.status ?? 200,
+						headers: { "content-type": "text/html", ...page.headers },
+					};
+					const head = `HTTP/1.1 ${String(status)} X\r\n${Object.entries(headers)
+						.map(([name, value]) => `${name}: ${value}\r\n`)
+						.join("")}\r\n`;
+					// Split mid-line, as a real network might.
+					controller.enqueue(new TextEncoder().encode(head.slice(0, 20)));
+					controller.enqueue(new TextEncoder().encode(`${head.slice(20)}<html>`));
 					controller.close();
 				},
 			}),
@@ -86,22 +99,6 @@ function fakeNetwork(pages: Record<string, Page>, requested: string[] = []): Net
 		};
 	};
 	return { fetch, connect };
-}
-
-/** Serialises a page as chunked HTTP/1.1, splitting the head mid-line like a real network might. */
-function httpResponse({ status = 200, headers = {}, chunks = [] }: Page): Uint8Array[] {
-	const encoder = new TextEncoder();
-	const headLines = Object.entries({ "content-type": "text/html", ...headers }).map(
-		([name, value]) => `${name}: ${value}\r\n`,
-	);
-	const head = `HTTP/1.1 ${String(status)} X\r\n${headLines.join("")}transfer-encoding: chunked\r\n\r\n`;
-	const body = chunks.map((chunk) => {
-		const bytes = encoder.encode(chunk);
-		return `${bytes.length.toString(16)}\r\n${chunk}\r\n`;
-	});
-	return [head.slice(0, 20), head.slice(20), ...body, "0\r\n\r\n"].map((text) =>
-		encoder.encode(text),
-	);
 }
 
 async function check(
@@ -351,6 +348,35 @@ void test("reports infrastructure as cited facts from provider-specific signals 
 		},
 	});
 	assert.deepEqual(githubDocs.infrastructure.providers, []);
+
+	// Render serves through Cloudflare from its own addresses, which sockets refuse.
+	const render = await check("https://render-site.example", {
+		"https://render-site.example/": {
+			refusesSockets: true,
+			headers: { "cf-ray": "abc-LHR", "rndr-id": "4b1" },
+			chunks: ['<meta name="generator" content="Astro">'],
+		},
+	});
+	assert.equal(render.verdict.status, "astro");
+	assert.deepEqual(
+		render.infrastructure.providers.map((provider) => provider.name),
+		["Cloudflare", "Render"],
+	);
+
+	// A firewall answering Cloudflare's socket egress differently: keep fetch()'s
+	// headers, minus the ones fetch() inside Cloudflare fakes.
+	const firewalled = await check("https://firewalled.example", {
+		"https://firewalled.example/": {
+			headers: { "x-nf-request-id": "01ABC" },
+			socketResponse: { status: 403, headers: { server: "openresty" } },
+			chunks: ['<meta name="generator" content="Astro">'],
+		},
+	});
+	assert.equal(firewalled.verdict.status, "astro");
+	assert.deepEqual(firewalled.infrastructure, {
+		providers: [{ name: "Netlify", role: "hosting", evidence: ["x-nf-request-id: 01ABC"] }],
+		headers: [{ name: "x-nf-request-id", value: "01ABC" }],
+	});
 
 	for (const name of PROVIDER_NAMES) assert.ok(providerIconIds[name], `Missing icon for ${name}`);
 });
