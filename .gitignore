@@ -29,3 +29,5 @@ tsconfig.tsbuildinfo
 .vscode
 **/.gitkeep
 .wrangler
+# pnpm store
+.pnpm-store/
