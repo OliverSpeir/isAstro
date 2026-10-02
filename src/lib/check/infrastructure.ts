@@ -1,12 +1,16 @@
+import { isCloudflareAddress } from "./ip";
 import type { Infrastructure, Provider } from "./types";
 
 type Rule = { name: string; role: Provider["role"] } & (
-	{ hostname: RegExp } | { header: string; value?: RegExp }
+	| { hostname: RegExp }
+	| { address: (address: string) => boolean }
+	| { header: string; value?: RegExp }
 );
 
 // Only signals that a single provider emits. Generic headers (server: nginx,
 // via, etag) are reported as raw headers instead, never mapped to a provider.
 const RULES: readonly Rule[] = [
+	{ name: "Cloudflare", role: "cdn", address: isCloudflareAddress },
 	{ name: "Cloudflare", role: "cdn", header: "cf-ray" },
 	{ name: "Cloudflare", role: "cdn", header: "server", value: /^cloudflare$/i },
 	{ name: "AWS CloudFront", role: "cdn", header: "x-amz-cf-id" },
@@ -109,8 +113,12 @@ const MAX_VALUE_LENGTH = 120;
 
 export const PROVIDER_NAMES = [...new Set(RULES.map((rule) => rule.name))];
 
-/** Lists the providers the final response or its hostname identifies, citing each signal. */
-export function detectInfrastructure(headers: Headers, url: string): Infrastructure {
+/** Lists the providers the final response, hostname or addresses identify, citing each signal. */
+export function detectInfrastructure(
+	headers: Headers,
+	url: string,
+	addresses: string[],
+): Infrastructure {
 	const hostname = new URL(url).hostname.toLowerCase().replace(/\.$/, "");
 	const providers = new Map<string, Provider>();
 	const citedHeaders = new Set<string>();
@@ -119,6 +127,9 @@ export function detectInfrastructure(headers: Headers, url: string): Infrastruct
 		let evidence: string | undefined;
 		if ("hostname" in rule) {
 			if (rule.hostname.test(hostname)) evidence = `hostname ${hostname}`;
+		} else if ("address" in rule) {
+			const address = addresses.find(rule.address);
+			if (address) evidence = `address ${address}`;
 		} else {
 			const value = headers.get(rule.header);
 			if (value !== null && (!rule.value || rule.value.test(value))) {

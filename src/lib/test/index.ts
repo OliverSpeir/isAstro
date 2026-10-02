@@ -1,30 +1,52 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkWebsiteInput, PROVIDER_NAMES, type Check } from "@lib/check";
+import { checkWebsiteInput, PROVIDER_NAMES, type Check, type Network } from "@lib/check";
+import type { Connect } from "@lib/check/socket-fetch";
 import { providerIconIds } from "@lib/provider-icons";
 
-type Page = { chunks?: string[]; status?: number; headers?: Record<string, string> };
+type Page = {
+	chunks?: string[];
+	status?: number;
+	headers?: Record<string, string>;
+	/** The host's DNS answer. Defaults to a non-Cloudflare address, so the page is served over a socket. */
+	address?: string;
+};
 
-/** A fake internet: `pages` by URL, plus fixed showcase services. */
-function fakeInternet(
-	pages: Record<string, Page>,
-	requested: string[] = [],
-): typeof globalThis.fetch {
-	return (input) => {
-		const url = input instanceof Request ? input.url : input.toString();
+const DEFAULT_ADDRESS = "93.184.215.14";
+
+/**
+ * A fake internet: `pages` by URL, plus fixed DNS and showcase services. Pages
+ * are served as raw chunked HTTP/1.1 over a fake socket, except on Cloudflare
+ * addresses, which (as on Workers) only fetch() can reach.
+ */
+function fakeNetwork(pages: Record<string, Page>, requested: string[] = []): Network {
+	const pageAt = (url: string) => {
 		requested.push(url);
-		if (url.startsWith("https://astro.build/api/showcase.json")) {
+		return pages[url];
+	};
+	const fetch: typeof globalThis.fetch = (input) => {
+		const url = new URL(input instanceof Request ? input.url : input.toString());
+		if (url.hostname === "cloudflare-dns.com") {
+			const name = url.searchParams.get("name");
+			const host = Object.entries(pages).find(([page]) => new URL(page).hostname === name);
+			const Answer =
+				host && url.searchParams.get("type") === "A"
+					? [{ type: 1, data: host[1].address ?? DEFAULT_ADDRESS }]
+					: [];
+			return Promise.resolve(Response.json({ Answer }));
+		}
+		if (url.hostname === "astro.build") {
 			return Promise.resolve(
 				Response.json([{ title: "Listed", url: "https://listed.example/", slug: "listed" }]),
 			);
 		}
-		if (url.startsWith("https://raw.githubusercontent.com/")) {
+		if (url.hostname === "raw.githubusercontent.com") {
 			return Promise.resolve(
 				new Response('<Card title="Docs" href="https://docs.example/" thumbnail="x.png" />'),
 			);
 		}
-		const page = pages[url];
-		if (!page) return Promise.reject(new TypeError(`fetch failed: ${url}`));
+		const page = pageAt(url.toString());
+		if (!page) return Promise.reject(new TypeError(`fetch failed: ${url.toString()}`));
 		const chunks = [...(page.chunks ?? [])];
 		const body = new ReadableStream<Uint8Array>({
 			pull(controller) {
@@ -36,6 +58,50 @@ function fakeInternet(
 		const headers = { "content-type": "text/html", ...page.headers };
 		return Promise.resolve(new Response(body, { status: page.status ?? 200, headers }));
 	};
+
+	const connect: Connect = ({ hostname }, { secureTransport }) => {
+		let receiveRequest: (request: string) => void = () => undefined;
+		const request = new Promise<string>((resolve) => (receiveRequest = resolve));
+		return {
+			writable: new WritableStream({
+				write(bytes) {
+					receiveRequest(new TextDecoder().decode(bytes));
+				},
+			}),
+			readable: new ReadableStream({
+				async start(controller) {
+					const path = (await request).split(" ")[1] ?? "/";
+					const page = pageAt(
+						`${secureTransport === "on" ? "https" : "http"}://${hostname}${path}`,
+					);
+					if (!page) {
+						controller.error(new Error("connection refused"));
+						return;
+					}
+					for (const bytes of httpResponse(page)) controller.enqueue(bytes);
+					controller.close();
+				},
+			}),
+			close: () => Promise.resolve(),
+		};
+	};
+	return { fetch, connect };
+}
+
+/** Serialises a page as chunked HTTP/1.1, splitting the head mid-line like a real network might. */
+function httpResponse({ status = 200, headers = {}, chunks = [] }: Page): Uint8Array[] {
+	const encoder = new TextEncoder();
+	const headLines = Object.entries({ "content-type": "text/html", ...headers }).map(
+		([name, value]) => `${name}: ${value}\r\n`,
+	);
+	const head = `HTTP/1.1 ${String(status)} X\r\n${headLines.join("")}transfer-encoding: chunked\r\n\r\n`;
+	const body = chunks.map((chunk) => {
+		const bytes = encoder.encode(chunk);
+		return `${bytes.length.toString(16)}\r\n${chunk}\r\n`;
+	});
+	return [head.slice(0, 20), head.slice(20), ...body, "0\r\n\r\n"].map((text) =>
+		encoder.encode(text),
+	);
 }
 
 async function check(
@@ -43,7 +109,7 @@ async function check(
 	pages: Record<string, Page>,
 	requested?: string[],
 ): Promise<Check> {
-	const result = await checkWebsiteInput(input, fakeInternet(pages, requested));
+	const result = await checkWebsiteInput(input, fakeNetwork(pages, requested));
 	assert.ok(result.ok, "input should be valid");
 	return result.check;
 }
@@ -63,10 +129,7 @@ void test("reads versions from split, reordered generator tags and reports showc
 		starlight: true,
 		astroVersion: "v5.1",
 		starlightVersion: "v0.30",
-		evidence: [
-			'generator meta tag "Astro v5.1"',
-			'generator meta tag "Starlight v0.30"',
-		],
+		evidence: ['generator meta tag "Astro v5.1"', 'generator meta tag "Starlight v0.30"'],
 	});
 	assert.deepEqual(result.showcase, {
 		astro: { listed: true, title: "Listed", url: "https://listed.example/" },
@@ -173,11 +236,21 @@ void test("follows redirects and meta refreshes, but never to private addresses"
 		status: "unreachable",
 		reason: "disallowed-redirect",
 	});
+
+	const requestedPrivate: string[] = [];
+	const privateDns = await check(
+		"https://rebind.example",
+		{ "https://rebind.example/": { address: "10.0.0.1" } },
+		requestedPrivate,
+	);
+	assert.deepEqual(privateDns.verdict, { status: "unreachable", reason: "network-error" });
+	assert.deepEqual(requestedPrivate, []);
 });
 
 void test("reports bot walls as blocked while keeping the infrastructure they reveal", async () => {
 	const cloudflare = await check("https://walled.example", {
 		"https://walled.example/": {
+			address: "104.16.132.229",
 			status: 403,
 			headers: { "cf-mitigated": "challenge", server: "cloudflare", "cf-ray": "abc-EWR" },
 			chunks: ["<title>Just a moment...</title>"],
@@ -185,7 +258,11 @@ void test("reports bot walls as blocked while keeping the infrastructure they re
 	});
 	assert.deepEqual(cloudflare.verdict, { status: "blocked", by: "cloudflare" });
 	assert.deepEqual(cloudflare.infrastructure.providers, [
-		{ name: "Cloudflare", role: "cdn", evidence: ["cf-ray: abc-EWR", "server: cloudflare"] },
+		{
+			name: "Cloudflare",
+			role: "cdn",
+			evidence: ["address 104.16.132.229", "cf-ray: abc-EWR", "server: cloudflare"],
+		},
 	]);
 
 	const siteground = await check("https://sg.example", {
@@ -209,7 +286,7 @@ void test("rejects bad input without fetching, and coalesces concurrent checks",
 		"ftp://example.com",
 		"https://user:pw@example.com",
 	]) {
-		assert.equal((await checkWebsiteInput(input, fakeInternet({}, requested))).ok, false, input);
+		assert.equal((await checkWebsiteInput(input, fakeNetwork({}, requested))).ok, false, input);
 	}
 	assert.deepEqual(requested, []);
 

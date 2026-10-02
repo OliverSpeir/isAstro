@@ -1,4 +1,5 @@
 import { createPageScanner } from "./html-scanner";
+import type { PageFetch } from "./network";
 import type { Verdict } from "./types";
 import { isPublicHttpUrl } from "./url";
 
@@ -25,17 +26,13 @@ type Step =
  * fetch → classify → scan → done, where redirects and meta refreshes loop back
  * to fetch. Every exit is a Verdict, so callers never see thrown errors.
  */
-export async function detect(url: string, fetch: typeof globalThis.fetch): Promise<Detection> {
+export async function detect(url: string, fetchPage: PageFetch): Promise<Detection> {
 	const signal = AbortSignal.timeout(TIMEOUT_MS);
 	let step: Step = { state: "fetch", url, redirects: 0 };
 	try {
 		while (step.state !== "done") {
 			if (step.state === "fetch") {
-				const response: Response = await fetch(step.url, {
-					signal,
-					redirect: "manual",
-					headers: REQUEST_HEADERS,
-				});
+				const response = await fetchPage(step.url, { signal, headers: REQUEST_HEADERS });
 				step = { ...step, state: "classify", response };
 			} else if (step.state === "classify") {
 				step = await classify(step);
