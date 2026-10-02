@@ -68,7 +68,7 @@ void test("reads versions from split, reordered generator tags and reports showc
 		evidence: [
 			'generator meta tag "Astro v5.1"',
 			'generator meta tag "Starlight v0.30"',
-			"_astro/ asset",
+			"asset /_astro/index.css",
 		],
 	});
 	assert.deepEqual(result.showcase, {
@@ -97,7 +97,7 @@ void test("finds body markers in minified pages without </head>, and hides the h
 	assert.deepEqual(result.verdict, {
 		status: "astro",
 		starlight: false,
-		evidence: ["scoped astro-* class"],
+		evidence: ["class astro-j7pv25f6"],
 	});
 	assert.deepEqual(result.infrastructure.host, { status: "hidden" });
 
@@ -113,7 +113,11 @@ void test("finds body markers in minified pages without </head>, and hides the h
 			],
 		},
 	});
-	assert.equal(island.verdict.status, "astro");
+	assert.deepEqual(island.verdict, {
+		status: "astro",
+		starlight: false,
+		evidence: ["<astro-island> element"],
+	});
 
 	const viewTransitions = await check("https://transitions.example", {
 		"https://transitions.example/": {
@@ -123,6 +127,21 @@ void test("finds body markers in minified pages without </head>, and hides the h
 		},
 	});
 	assert.equal(viewTransitions.verdict.status, "astro");
+
+	// The ClientRouter's lifecycle events, used from an inline module script (as Astro emits it).
+	const clientRouter = await check("https://router.example", {
+		"https://router.example/": {
+			chunks: [
+				'<html><head></head><body><script type="module">document.addEventListener("astro:before-swap",',
+				" () => {});</script></body>",
+			],
+		},
+	});
+	assert.deepEqual(clientRouter.verdict, {
+		status: "astro",
+		starlight: false,
+		evidence: ["module script uses astro:before-swap event"],
+	});
 });
 
 void test("ignores Astro-looking text that isn't real markup", async () => {
@@ -132,7 +151,9 @@ void test("ignores Astro-looking text that isn't real markup", async () => {
 				'<html><head><script>const x = `<meta name="generator" content="Astro 5"><div data-astro-cid-x>`;</script>',
 				"<!-- <astro-island> --></head><body><pre><div data-astro-cid-example></div></pre>",
 				'&lt;div data-astro-cid-escaped&gt;<meta name="generator" content="Astro 5">',
-				'<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></body></html>',
+				'<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>',
+				// Next.js streams page text (here, a code sample from a post about Astro) in classic scripts.
+				`<script>self.__next_f.push([1,"document.addEventListener('astro:page-load', f)"])</script></body></html>`,
 			],
 		},
 	});

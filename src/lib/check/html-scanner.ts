@@ -18,11 +18,16 @@ export type ScanResult =
 	| Extract<Verdict, { status: "astro" | "not-astro" }>
 	| { status: "meta-refresh"; location: string };
 
+/** [kind, pattern, describe]: the first match of each kind is cited as evidence. */
+type Marker = readonly [string, RegExp, (match: RegExpExecArray) => string];
+
 type Mode =
-	{ name: "text" } | { name: "comment" } | { name: "raw-text"; element: string; closer: RegExp };
+	| { name: "text" }
+	| { name: "comment" }
+	| { name: "raw-text"; element: string; closer: RegExp; markers: readonly Marker[] };
 
 const MAX_CARRY_LENGTH = 16_384;
-const STYLE_OVERLAP_LENGTH = 64;
+const RAW_TEXT_OVERLAP_LENGTH = 64;
 
 /** Elements whose contents are not markup (or are examples of markup). */
 const RAW_TEXT_ELEMENTS = new Set([
@@ -52,24 +57,53 @@ const ATTRIBUTE = /([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+
 const GENERATOR_CONTENT = /^(Astro|Starlight)(?:\s+(.+))?$/i;
 const META_REFRESH_CONTENT = /^\s*\d+(?:\.\d+)?\s*[;,]\s*url\s*=\s*(.*?)\s*$/i;
 
-const TAG_MARKERS: readonly (readonly [RegExp, string])[] = [
-	[/\sdata-astro-[\w-]+/, "data-astro-* attribute"],
-	[/\sclass\s*=\s*(?:"[^"]*|'[^']*|[^\s>]*)\bastro-[a-zA-Z0-9]{8}\b/, "scoped astro-* class"],
-	[/(?:^|["'=\s/,(])_astro\//, "_astro/ asset"],
+const TAG_MARKERS: readonly Marker[] = [
+	["attribute", /\s(data-astro-[\w-]+)/, (match) => `${match[1] ?? ""} attribute`],
+	[
+		"class",
+		/\sclass\s*=\s*(?:"[^"]*|'[^']*|[^\s>]*)\b(astro-[a-zA-Z0-9]{8})\b/,
+		(match) => `class ${match[1] ?? ""}`,
+	],
+	[
+		"asset",
+		/["'=\s,(]((?:[^"'\s>(),=]*\/)?_astro\/[^"'\s>(),]+)/,
+		(match) => `asset ${(match[1] ?? "").slice(0, 80)}`,
+	],
 ];
-const STYLE_MARKERS: readonly (readonly [RegExp, string])[] = [
-	[/:where\(\.astro-[a-zA-Z0-9]{8}\)/, "scoped style selector"],
-	[/\[data-astro-[\w-]+/, "data-astro-* style selector"],
+const STYLE_MARKERS: readonly Marker[] = [
+	[
+		"style",
+		/:where\(\.astro-[a-zA-Z0-9]{8}\)|\[data-astro-[\w-]+[^\]]{0,40}\]/,
+		(match) => `style selector ${match[0]}`,
+	],
+];
+// Only inline module scripts: Astro emits its scripts that way, while frameworks
+// like Next.js stream page text (which may quote Astro code) in classic scripts.
+const MODULE_SCRIPT_MARKERS: readonly Marker[] = [
+	[
+		"script",
+		/["'`](astro:(?:page-load|after-swap|before-swap|before-preparation|after-preparation))["'`]/,
+		(match) => `module script uses ${match[1] ?? ""} event`,
+	],
+	["server-island", /\/_server-islands\//, () => "module script fetches /_server-islands/"],
 ];
 
 export function createPageScanner(baseUrl: string) {
 	let carry = "";
 	let mode: Mode = { name: "text" };
 	let inHead = true;
-	let styleTail = "";
+	let rawTextTail = "";
 	let astroGenerator: { version?: string } | undefined;
 	let starlightGenerator: { version?: string } | undefined;
-	const markers = new Set<string>();
+	const markers = new Map<string, string>();
+
+	function findMarkers(text: string, candidates: readonly Marker[]): void {
+		for (const [kind, pattern, describe] of candidates) {
+			if (markers.has(kind)) continue;
+			const match = pattern.exec(text);
+			if (match) markers.set(kind, describe(match));
+		}
+	}
 
 	function astroResult(): ScanResult | undefined {
 		if (!astroGenerator && !starlightGenerator && markers.size === 0) return undefined;
@@ -77,7 +111,7 @@ export function createPageScanner(baseUrl: string) {
 		if (astroGenerator) evidence.push(generatorEvidence("Astro", astroGenerator.version));
 		if (starlightGenerator)
 			evidence.push(generatorEvidence("Starlight", starlightGenerator.version));
-		evidence.push(...markers);
+		evidence.push(...markers.values());
 		return {
 			status: "astro",
 			starlight: Boolean(starlightGenerator),
@@ -111,12 +145,21 @@ export function createPageScanner(baseUrl: string) {
 		if (closing) return undefined;
 
 		if (RAW_TEXT_ELEMENTS.has(name)) {
-			mode = { name: "raw-text", element: name, closer: new RegExp(`</${name}`, "gi") };
+			const isModuleScript =
+				name === "script" && parseAttributes(tag).get("type")?.trim().toLowerCase() === "module";
+			const rawTextMarkers =
+				name === "style" ? STYLE_MARKERS : isModuleScript ? MODULE_SCRIPT_MARKERS : [];
+			mode = {
+				name: "raw-text",
+				element: name,
+				closer: new RegExp(`</${name}`, "gi"),
+				markers: rawTextMarkers,
+			};
+			rawTextTail = "";
 		}
-		if (name.startsWith("astro-")) markers.add("astro-* element");
-		for (const [pattern, label] of TAG_MARKERS) {
-			if (pattern.test(tag)) markers.add(label);
-		}
+		if (name.startsWith("astro-") && !markers.has("element"))
+			markers.set("element", `<${name}> element`);
+		findMarkers(tag, TAG_MARKERS);
 		return inHead ? undefined : astroResult();
 	}
 
@@ -143,12 +186,12 @@ export function createPageScanner(baseUrl: string) {
 		}
 	}
 
-	function handleStyleText(text: string): void {
-		const window = styleTail + text;
-		for (const [pattern, label] of STYLE_MARKERS) {
-			if (pattern.test(window)) markers.add(label);
-		}
-		styleTail = window.slice(-STYLE_OVERLAP_LENGTH);
+	/** Scans raw text with a small overlap so markers split across chunks still match. */
+	function handleRawText(text: string, candidates: readonly Marker[]): void {
+		if (candidates.length === 0) return;
+		const window = rawTextTail + text;
+		findMarkers(window, candidates);
+		rawTextTail = window.slice(-RAW_TEXT_OVERLAP_LENGTH);
 	}
 
 	/** Feed decoded text. Returns a result as soon as the page is decided. */
@@ -164,7 +207,7 @@ export function createPageScanner(baseUrl: string) {
 				const textEnd = close
 					? close.index
 					: Math.max(index, input.length - mode.element.length - 1);
-				if (mode.element === "style") handleStyleText(input.slice(index, textEnd));
+				handleRawText(input.slice(index, textEnd), mode.markers);
 				if (!close) {
 					carry = input.slice(textEnd);
 					break;
