@@ -363,6 +363,17 @@ void test("reports infrastructure as cited facts from provider-specific signals 
 		["Cloudflare", "Render"],
 	);
 
+	// The socket asks for an uncompressed page, so its content-length can exceed the
+	// size cap; only fetch()'s headers decide how the page is read.
+	const uncompressed = await check("https://big-uncompressed.example", {
+		"https://big-uncompressed.example/": {
+			socketResponse: { status: 200, headers: { server: "nginx", "content-length": "5000000" } },
+			chunks: ['<meta name="generator" content="Astro">'],
+		},
+	});
+	assert.equal(uncompressed.verdict.status, "astro");
+	assert.deepEqual(uncompressed.infrastructure.headers, [{ name: "server", value: "nginx" }]);
+
 	// A firewall answering Cloudflare's socket egress differently: keep fetch()'s
 	// headers, minus the ones fetch() inside Cloudflare fakes.
 	const firewalled = await check("https://firewalled.example", {

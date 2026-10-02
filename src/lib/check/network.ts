@@ -10,48 +10,59 @@ export type PageFetch = (
 	init: { signal: AbortSignal; headers: Record<string, string> },
 ) => Promise<Response>;
 
-/** How long to wait for the socket's headers once fetch() has its response. */
+/** How long to wait for a socket's headers once the check is otherwise done. */
 const SOCKET_GRACE_MS = 1_000;
 /** The error Workers raise for sockets to Cloudflare's own network. */
 const SOCKET_REFUSED = /cannot connect to the specified address/i;
-/** Headers fetch() inside Cloudflare adds to (or overwrites on) every response. */
+/** Headers fetch() inside Cloudflare can add to (or overwrite on) responses. */
 const CLOUDFLARE_INJECTED_HEADERS = ["server", "cf-ray", "cf-cache-status"];
 
 type SocketResult = { status: number; headers: Headers } | "refused" | undefined;
+type Hop = { onCloudflare: boolean; socket: Promise<SocketResult>; status?: number };
 
 /**
  * Pages always come through fetch(), which sites accept most reliably. But
- * inside Cloudflare, fetch() rewrites `server` and adds `cf-ray` to every
- * response, so a raw socket fetches the same URL's head in parallel, and its
- * headers replace fetch()'s when both got the same status. Sockets can't reach
- * Cloudflare's network; for those sites Cloudflare really is in front, so
- * fetch()'s headers are already truthful.
+ * fetch() inside Cloudflare can rewrite `server` and add `cf-ray`, so a raw
+ * socket reads each URL's response head in parallel, purely to report the
+ * headers the server really sent. Sockets can't reach Cloudflare's network;
+ * for those sites Cloudflare really is in front, so fetch()'s headers stand.
  */
-export function createPageFetch({ fetch, connect }: Network): PageFetch {
-	return async (url, init) => {
+export function createPageFetch({ fetch, connect }: Network) {
+	const hops = new Map<string, Hop>();
+
+	const fetchPage: PageFetch = async (url, init) => {
 		const addresses = await resolveAddresses(new URL(url).hostname, fetch);
 		if (addresses.length === 0) throw new Error("No DNS records");
 		if (addresses.some(isPrivateAddress)) throw new Error("Resolves to a private address");
 
 		const onCloudflare = addresses.some(isCloudflareAddress);
-		const socket: Promise<SocketResult> =
-			connect && !onCloudflare
-				? socketHead(connect, url, init).catch((error: unknown) =>
-						error instanceof Error && SOCKET_REFUSED.test(error.message) ? "refused" : undefined,
-					)
-				: Promise.resolve(undefined);
+		const hop: Hop = {
+			onCloudflare,
+			socket:
+				connect && !onCloudflare
+					? socketHead(connect, url, init).catch((error: unknown) =>
+							error instanceof Error && SOCKET_REFUSED.test(error.message) ? "refused" : undefined,
+						)
+					: Promise.resolve(undefined),
+		};
+		hops.set(url, hop);
 		const response = await fetch(url, { ...init, redirect: "manual" });
-		if (!connect || onCloudflare) return response;
-
-		const grace = new Promise<undefined>((resolve) => setTimeout(resolve, SOCKET_GRACE_MS));
-		const origin = await Promise.race([socket, grace]);
-		if (origin === "refused") return response;
-		const headers =
-			origin?.status === response.status
-				? origin.headers
-				: withoutHeaders(response.headers, CLOUDFLARE_INJECTED_HEADERS);
-		return new Response(response.body, { status: response.status, headers });
+		hop.status = response.status;
+		return response;
 	};
+
+	/** The headers to report for `url`: the socket's when it saw the same response, else fetch()'s. */
+	async function originHeaders(url: string, fetched: Headers): Promise<Headers> {
+		const hop = hops.get(url);
+		if (!connect || !hop || hop.onCloudflare) return fetched;
+		const grace = new Promise<undefined>((resolve) => setTimeout(resolve, SOCKET_GRACE_MS));
+		const socket = await Promise.race([hop.socket, grace]);
+		if (socket === "refused") return fetched;
+		if (socket && socket.status === hop.status) return socket.headers;
+		return withoutHeaders(fetched, CLOUDFLARE_INJECTED_HEADERS);
+	}
+
+	return { fetchPage, originHeaders };
 }
 
 function withoutHeaders(source: Headers, names: string[]): Headers {

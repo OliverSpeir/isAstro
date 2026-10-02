@@ -53,8 +53,10 @@ async function runCheck(url: string, network: Network): Promise<Check> {
 	const starlightSites = getStarlightShowcaseSites(fetch);
 	for (const prefetch of [astroSites, starlightSites]) prefetch.catch(() => undefined);
 
-	const { finalUrl, verdict, headers } = await detect(url, createPageFetch(network));
-	const [addresses, astroListing, starlightListing] = await Promise.all([
+	const { fetchPage, originHeaders } = createPageFetch(network);
+	const { finalUrl, verdict, headers } = await detect(url, fetchPage);
+	const [reportedHeaders, addresses, astroListing, starlightListing] = await Promise.all([
+		headers ? originHeaders(finalUrl, headers) : new Headers(),
 		// Already resolved (and cached) while fetching, unless the check failed before that.
 		settled(resolveAddresses(new URL(finalUrl).hostname, fetch)),
 		verdict.status === "astro" ? settled(astroSites) : undefined,
@@ -65,7 +67,7 @@ async function runCheck(url: string, network: Network): Promise<Check> {
 		url,
 		finalUrl,
 		verdict,
-		infrastructure: detectInfrastructure(headers ?? new Headers(), finalUrl, addresses ?? []),
+		infrastructure: detectInfrastructure(reportedHeaders, finalUrl, addresses ?? []),
 		...(verdict.status === "astro" && {
 			showcase: {
 				...(astroListing && { astro: findListing(finalUrl, astroListing) }),
