@@ -59,11 +59,19 @@ function verdictDetail(verdict: Verdict): string {
 	if (verdict.status === "not-astro") return "No Astro evidence found";
 	if (verdict.status === "blocked")
 		return `Blocked by ${BOT_WALL_NAMES[verdict.by]} bot protection`;
-	const codes = [
-		verdict.httpStatus && String(verdict.httpStatus),
-		verdict.cloudflareError && `Cloudflare error ${String(verdict.cloudflareError)}`,
-	].filter(Boolean);
-	return `${UNREACHABLE_REASONS[verdict.reason]}${codes.length ? ` (${codes.join(", ")})` : ""}`;
+	if (verdict.cloudflareError === 1016) {
+		return "Cloudflare couldn't resolve the site's origin server (error 1016)";
+	}
+	if (verdict.cloudflareError) {
+		return `Cloudflare returned error ${String(verdict.cloudflareError)}`;
+	}
+	const status = verdict.httpStatus ? ` (${String(verdict.httpStatus)})` : "";
+	return `${UNREACHABLE_REASONS[verdict.reason]}${status}`;
+}
+
+/** Cloudflare's documentation page for one of its 1xxx error codes. */
+function cloudflareErrorUrl(code: number): string {
+	return `https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-${String(code)}/`;
 }
 
 function providerNames(providers: readonly Provider[]): string {
@@ -214,7 +222,22 @@ const showcaseLinks = {
 								<dl class="result-details">
 									<div>
 										<dt>{isAstro ? "Evidence:" : "Details:"}</dt>
-										<dd>{verdictDetail(verdict)}</dd>
+										<dd>
+											{verdictDetail(verdict)}
+											{verdict.status === "unreachable" && verdict.cloudflareError && (
+												<p class="detail-note">
+													{verdict.cloudflareError === 1016 &&
+														"Some sites on Cloudflare's partial DNS setup give this error to checkers running on Cloudflare, like this one. "}
+													<a
+														href={cloudflareErrorUrl(verdict.cloudflareError)}
+														target="_blank"
+														rel="noopener noreferrer"
+													>
+														Cloudflare's explanation
+													</a>
+												</p>
+											)}
+										</dd>
 									</div>
 									{check.showcase?.astro && (
 										<div>
@@ -719,6 +742,12 @@ const showcaseLinks = {
 		font-size: 0.75rem;
 		font-weight: 650;
 		text-transform: uppercase;
+	}
+
+	.detail-note {
+		margin: 0.25rem 0 0;
+		font-size: 0.875em;
+		opacity: 0.8;
 	}
 
 	.result-details dd {
