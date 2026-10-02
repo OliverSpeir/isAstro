@@ -132,6 +132,10 @@ const spec = {
 							],
 						},
 						httpStatus: { type: "integer" },
+						cloudflareError: {
+							type: "integer",
+							description: "Cloudflare's 1xxx error code, when Cloudflare served the error page",
+						},
 					}),
 				],
 			},

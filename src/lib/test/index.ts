@@ -275,6 +275,22 @@ void test("reports bot walls as blocked while keeping the infrastructure they re
 
 	const down = await check("https://down.example", { "https://down.example/": { status: 500 } });
 	assert.deepEqual(down.verdict, { status: "unreachable", reason: "http-error", httpStatus: 500 });
+
+	// Cloudflare wraps origin failures in a 530 whose body names the 1xxx error.
+	const originError = await check("https://origin-error.example", {
+		"https://origin-error.example/": {
+			address: "104.16.132.229",
+			status: 530,
+			headers: { server: "cloudflare" },
+			chunks: ["error code: 1016"],
+		},
+	});
+	assert.deepEqual(originError.verdict, {
+		status: "unreachable",
+		reason: "http-error",
+		httpStatus: 530,
+		cloudflareError: 1016,
+	});
 });
 
 void test("rejects bad input without fetching, and coalesces concurrent checks", async () => {

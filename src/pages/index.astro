@@ -59,8 +59,11 @@ function verdictDetail(verdict: Verdict): string {
 	if (verdict.status === "not-astro") return "No Astro evidence found";
 	if (verdict.status === "blocked")
 		return `Blocked by ${BOT_WALL_NAMES[verdict.by]} bot protection`;
-	const status = verdict.httpStatus ? ` (${String(verdict.httpStatus)})` : "";
-	return `${UNREACHABLE_REASONS[verdict.reason]}${status}`;
+	const codes = [
+		verdict.httpStatus && String(verdict.httpStatus),
+		verdict.cloudflareError && `Cloudflare error ${String(verdict.cloudflareError)}`,
+	].filter(Boolean);
+	return `${UNREACHABLE_REASONS[verdict.reason]}${codes.length ? ` (${codes.join(", ")})` : ""}`;
 }
 
 function providerNames(providers: readonly Provider[]): string {

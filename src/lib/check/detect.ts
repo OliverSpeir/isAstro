@@ -70,11 +70,21 @@ async function classify({
 	const blockedBy = botWallFromHeaders(headers);
 	if (blockedBy) return done({ status: "blocked", by: blockedBy });
 	if (!response.ok) {
-		const bodyWall = botWallFromBody(await readPrefix(response, BOT_WALL_SCAN_BYTES));
+		const prefix = await readPrefix(response, BOT_WALL_SCAN_BYTES);
+		const bodyWall = botWallFromBody(prefix);
+		const cloudflareError =
+			headers.get("server")?.toLowerCase() === "cloudflare"
+				? cloudflareErrorCode(prefix)
+				: undefined;
 		return done(
 			bodyWall
 				? { status: "blocked", by: bodyWall }
-				: { status: "unreachable", reason: "http-error", httpStatus: status },
+				: {
+						status: "unreachable",
+						reason: "http-error",
+						httpStatus: status,
+						...(cloudflareError && { cloudflareError }),
+					},
 		);
 	}
 	const mimeType = headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
@@ -158,6 +168,12 @@ function botWallFromBody(text: string): BotWall | undefined {
 	// Lookalike interstitials (e.g. WordPress plugins) copy Cloudflare's wording.
 	if (/<title>(Just a moment|Checking your browser)/i.test(text)) return "unknown";
 	return undefined;
+}
+
+/** The 1xxx code on a Cloudflare error page ("error code: 1016", or the HTML page's code span). */
+function cloudflareErrorCode(text: string): number | undefined {
+	const match = /error code:?\s*(1\d{3})\b|cf-error-code">\s*(1\d{3})/i.exec(text);
+	return match ? Number(match[1] ?? match[2]) : undefined;
 }
 
 async function readPrefix(response: Response, maxBytes: number): Promise<string> {

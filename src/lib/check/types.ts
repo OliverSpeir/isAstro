@@ -11,7 +11,13 @@ export type Verdict =
 	  }
 	| { status: "not-astro" }
 	| { status: "blocked"; by: "cloudflare" | "vercel" | "sgcaptcha" | "unknown" }
-	| { status: "unreachable"; reason: UnreachableReason; httpStatus?: number };
+	| {
+			status: "unreachable";
+			reason: UnreachableReason;
+			httpStatus?: number;
+			/** Cloudflare's 1xxx code from its error page, e.g. 1016 (origin DNS error). */
+			cloudflareError?: number;
+	  };
 
 export type UnreachableReason =
 	| "timeout"
