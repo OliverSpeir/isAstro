@@ -371,6 +371,12 @@ void test("reports infrastructure as cited facts from provider-specific signals 
 	assert.deepEqual(cdn?.evidence[0], "address 93.184.215.14 on Cloudflare's network");
 	assert.deepEqual(hosting, { name: "Render", role: "hosting", evidence: ["rndr-id: 4b1"] });
 
+	// A bad certificate also fails the socket, but fetch() only gets Cloudflare's 526.
+	const badCertificate = await check("https://expired-cert.example", {
+		"https://expired-cert.example/": { refusesSockets: true, status: 526 },
+	});
+	assert.deepEqual(badCertificate.infrastructure.providers, []);
+
 	// The socket asks for an uncompressed page, so its content-length can exceed the
 	// size cap; only fetch()'s headers decide how the page is read.
 	const uncompressed = await check("https://big-uncompressed.example", {

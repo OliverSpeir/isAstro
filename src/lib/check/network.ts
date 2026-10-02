@@ -36,8 +36,9 @@ export type Origin = { headers: Headers; cloudflareAddress?: string | undefined 
  *
  * Workers refuse sockets to Cloudflare's network. That covers its published
  * ranges, and also addresses it serves for others (e.g. Render, WP Engine).
- * A refused socket to a URL that fetch() loaded fine is therefore a site
- * behind Cloudflare. (TLS failures raise the same error, but fail fetch() too.)
+ * A refused socket to a URL that fetch() got a real response from is
+ * therefore a site behind Cloudflare. TLS failures raise the same error, but
+ * then fetch() only gets Cloudflare's own 52x error.
  */
 export function createPageFetch({ fetch, connect }: Network) {
 	const hops = new Map<string, Hop>();
@@ -72,7 +73,7 @@ export function createPageFetch({ fetch, connect }: Network) {
 		if (!connect || hop.onCloudflare) return { headers: fetched, cloudflareAddress };
 		const grace = new Promise<undefined>((resolve) => setTimeout(resolve, SOCKET_GRACE_MS));
 		const socket = await Promise.race([hop.socket, grace]);
-		if (socket === "refused" && hop.status !== undefined) {
+		if (socket === "refused" && hop.status !== undefined && !isCloudflareErrorStatus(hop.status)) {
 			return { headers: fetched, cloudflareAddress: hop.addresses[0] };
 		}
 		if (socket && socket !== "refused" && socket.status === hop.status) {
@@ -82,6 +83,11 @@ export function createPageFetch({ fetch, connect }: Network) {
 	}
 
 	return { fetchPage, origin };
+}
+
+/** 520–530 are made up by Cloudflare when it couldn't get a response (e.g. 526: invalid origin certificate). */
+function isCloudflareErrorStatus(status: number): boolean {
+	return status >= 520 && status <= 530;
 }
 
 function withoutHeaders(source: Headers, names: string[]): Headers {
