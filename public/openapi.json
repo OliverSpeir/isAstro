@@ -94,20 +94,7 @@
             "$ref": "#/components/schemas/Verdict"
           },
           "infrastructure": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "edge",
-              "host"
-            ],
-            "properties": {
-              "edge": {
-                "$ref": "#/components/schemas/Layer"
-              },
-              "host": {
-                "$ref": "#/components/schemas/Layer"
-              }
-            }
+            "$ref": "#/components/schemas/Infrastructure"
           },
           "showcase": {
             "type": "object",
@@ -218,76 +205,63 @@
           }
         ]
       },
-      "Layer": {
-        "description": "\"hidden\" means a CDN answered, so the origin behind it is not observable.",
-        "oneOf": [
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "status",
-              "providers"
-            ],
-            "properties": {
-              "status": {
-                "const": "identified"
-              },
-              "providers": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/Provider"
+      "Infrastructure": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "providers",
+          "headers"
+        ],
+        "properties": {
+          "providers": {
+            "type": "array",
+            "description": "Providers named by signals only they emit. CDNs first; a CDN usually hides the host.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "role",
+                "evidence"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "role": {
+                  "enum": [
+                    "cdn",
+                    "hosting"
+                  ]
+                },
+                "evidence": {
+                  "type": "array",
+                  "description": "Each signal seen, e.g. \"cf-ray: 8f1a2b3c-EWR\" or \"hostname x.pages.dev\"",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               }
             }
           },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "status"
-            ],
-            "properties": {
-              "status": {
-                "const": "hidden"
-              }
-            }
-          },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "status"
-            ],
-            "properties": {
-              "status": {
-                "const": "unknown"
-              }
-            }
-          }
-        ]
-      },
-      "Provider": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "name",
-          "confidence",
-          "evidence"
-        ],
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "confidence": {
-            "enum": [
-              "confirmed",
-              "likely"
-            ]
-          },
-          "evidence": {
+          "headers": {
             "type": "array",
+            "description": "Raw serving and caching response headers, including every header cited as evidence",
             "items": {
-              "type": "string"
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "value"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              }
             }
           }
         }

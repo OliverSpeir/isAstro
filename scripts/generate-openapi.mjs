@@ -91,15 +91,7 @@ const spec = {
 					url: { type: "string", format: "uri" },
 					finalUrl: { type: "string", format: "uri", description: "URL after redirects" },
 					verdict: { $ref: "#/components/schemas/Verdict" },
-					infrastructure: {
-						type: "object",
-						additionalProperties: false,
-						required: ["edge", "host"],
-						properties: {
-							edge: { $ref: "#/components/schemas/Layer" },
-							host: { $ref: "#/components/schemas/Layer" },
-						},
-					},
+					infrastructure: { $ref: "#/components/schemas/Infrastructure" },
 					showcase: {
 						type: "object",
 						description: "Only present for Astro sites",
@@ -143,21 +135,28 @@ const spec = {
 					}),
 				],
 			},
-			Layer: {
-				description: '"hidden" means a CDN answered, so the origin behind it is not observable.',
-				oneOf: [
-					object(["status", "providers"], {
-						status: { const: "identified" },
-						providers: { type: "array", items: { $ref: "#/components/schemas/Provider" } },
+			Infrastructure: object(["providers", "headers"], {
+				providers: {
+					type: "array",
+					description:
+						"Providers named by signals only they emit. CDNs first; a CDN usually hides the host.",
+					items: object(["name", "role", "evidence"], {
+						name: { type: "string" },
+						role: { enum: ["cdn", "hosting"] },
+						evidence: {
+							type: "array",
+							description:
+								'Each signal seen, e.g. "cf-ray: 8f1a2b3c-EWR" or "hostname x.pages.dev"',
+							items: { type: "string" },
+						},
 					}),
-					object(["status"], { status: { const: "hidden" } }),
-					object(["status"], { status: { const: "unknown" } }),
-				],
-			},
-			Provider: object(["name", "confidence", "evidence"], {
-				name: { type: "string" },
-				confidence: { enum: ["confirmed", "likely"] },
-				evidence: { type: "array", items: { type: "string" } },
+				},
+				headers: {
+					type: "array",
+					description:
+						"Raw serving and caching response headers, including every header cited as evidence",
+					items: object(["name", "value"], { name: { type: "string" }, value: { type: "string" } }),
+				},
 			}),
 			ShowcaseStatus: {
 				oneOf: [

@@ -42,14 +42,14 @@ input returns `400`.
 		| { status: "not-astro" }
 		| { status: "blocked"; by: "cloudflare" | "vercel" | "sgcaptcha" | "unknown" }
 		| { status: "unreachable"; reason: "timeout" | "network-error" | "http-error" | "not-html" | "empty-body" | "too-large" | "too-many-redirects" | "disallowed-redirect"; httpStatus?: number };
-	infrastructure: { edge: Layer; host: Layer };
+	infrastructure: {
+		// Named only from signals a single provider emits; CDNs first. A CDN usually hides the host.
+		providers: { name: string; role: "cdn" | "hosting"; evidence: string[] }[]; // e.g. "cf-ray: 8f1a…-EWR"
+		headers: { name: string; value: string }[]; // raw server/cache headers, plus every cited header
+	};
 	showcase?: { astro?: ShowcaseStatus; starlight?: ShowcaseStatus }; // Astro sites only
 }
 
-type Layer =
-	| { status: "identified"; providers: { name: string; confidence: "confirmed" | "likely"; evidence: string[] }[] }
-	| { status: "hidden" } // a CDN answered, so the origin isn't observable
-	| { status: "unknown" };
 type ShowcaseStatus = { listed: false } | { listed: true; title: string; url: string };
 ```
 

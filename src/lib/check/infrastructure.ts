@@ -1,237 +1,145 @@
-import { readTextWithLimit } from "./read-text";
-import { cached } from "./ttl-cache";
-import type { Infrastructure, Layer, Provider } from "./types";
+import type { Infrastructure, Provider } from "./types";
 
-type Rule = { name: string; layer: "edge" | "host" } & (
-	{ hostname: RegExp; label: string } | { header: string; value?: RegExp }
+type Rule = { name: string; role: Provider["role"] } & (
+	{ hostname: RegExp } | { header: string; value?: RegExp }
 );
 
-// Only provider-specific signals. Generic headers (via, x-cache, etag) are ignored.
+// Only signals that a single provider emits. Generic headers (server: nginx,
+// via, etag) are reported as raw headers instead, never mapped to a provider.
 const RULES: readonly Rule[] = [
-	{ name: "Cloudflare Pages", layer: "host", hostname: /\.pages\.dev$/, label: "pages.dev" },
-	{ name: "Vercel", layer: "host", hostname: /\.vercel\.app$/, label: "vercel.app" },
-	{ name: "Netlify", layer: "host", hostname: /\.netlify\.app$/, label: "netlify.app" },
-	{ name: "GitHub Pages", layer: "host", hostname: /\.github\.io$/, label: "github.io" },
+	{ name: "Cloudflare", role: "cdn", header: "cf-ray" },
+	{ name: "Cloudflare", role: "cdn", header: "server", value: /^cloudflare$/i },
+	{ name: "AWS CloudFront", role: "cdn", header: "x-amz-cf-id" },
+	{ name: "AWS CloudFront", role: "cdn", header: "server", value: /^CloudFront$/i },
+	{ name: "Fastly", role: "cdn", header: "x-served-by", value: /^cache-/i },
+	{ name: "Fastly", role: "cdn", header: "x-fastly-request-id" },
+	{ name: "Akamai", role: "cdn", header: "server", value: /^(AkamaiGHost|AkamaiNetStorage)/i },
+	{ name: "Akamai", role: "cdn", header: "x-akamai-transformed" },
+	{ name: "Akamai", role: "cdn", header: "x-akamai-request-id" },
+	{ name: "Azure Front Door", role: "cdn", header: "x-azure-ref" },
 	{
-		name: "AWS S3",
-		layer: "host",
-		hostname: /(^|\.)s3(-website)?[.-][a-z0-9-]+\.amazonaws\.com(\.cn)?$|\.s3\.amazonaws\.com$/,
-		label: "S3 endpoint",
-	},
-	{
-		name: "Google Cloud Storage",
-		layer: "host",
-		hostname: /(^|\.)storage\.googleapis\.com$/,
-		label: "storage.googleapis.com",
-	},
-	{
-		name: "Azure Blob Storage",
-		layer: "host",
-		hostname: /\.(web\.core\.windows\.net|web\.storage\.azure\.net|blob\.core\.windows\.net)$/,
-		label: "Azure storage",
-	},
-	{
-		name: "Azure Static Web Apps",
-		layer: "host",
-		hostname: /\.azurestaticapps\.net$/,
-		label: "azurestaticapps.net",
-	},
-	{ name: "Azure", layer: "host", hostname: /\.azurewebsites\.net$/, label: "azurewebsites.net" },
-	{ name: "Fly.io", layer: "host", hostname: /\.fly\.dev$/, label: "fly.dev" },
-	{ name: "Render", layer: "host", hostname: /\.onrender\.com$/, label: "onrender.com" },
-	{ name: "Google Cloud", layer: "host", hostname: /\.run\.app$/, label: "run.app" },
-	{
-		name: "Firebase",
-		layer: "host",
-		hostname: /\.(web\.app|firebaseapp\.com)$/,
-		label: "Firebase",
-	},
-	{ name: "Heroku", layer: "host", hostname: /\.herokuapp\.com$/, label: "herokuapp.com" },
-	{ name: "Railway", layer: "host", hostname: /\.railway\.app$/, label: "railway.app" },
-	{
-		name: "DigitalOcean",
-		layer: "host",
-		hostname: /\.ondigitalocean\.app$/,
-		label: "ondigitalocean.app",
-	},
-	{ name: "Shopify", layer: "host", hostname: /\.myshopify\.com$/, label: "myshopify.com" },
-	{ name: "Webflow", layer: "host", hostname: /\.webflow\.io$/, label: "webflow.io" },
-	{ name: "Framer", layer: "host", hostname: /\.framer\.(app|website)$/, label: "Framer" },
-	{ name: "GitBook", layer: "host", hostname: /\.gitbook\.io$/, label: "gitbook.io" },
-	{ name: "ReadMe", layer: "host", hostname: /\.readme\.io$/, label: "readme.io" },
-	{ name: "Mintlify", layer: "host", hostname: /\.mintlify\.(app|dev)$/, label: "Mintlify" },
-
-	{ name: "Cloudflare", layer: "edge", header: "cf-ray" },
-	{ name: "Cloudflare", layer: "edge", header: "server", value: /^cloudflare$/i },
-	{ name: "Vercel", layer: "edge", header: "server", value: /^vercel$/i },
-	{ name: "Vercel", layer: "host", header: "x-vercel-id" },
-	{ name: "Netlify", layer: "edge", header: "server", value: /^netlify/i },
-	{ name: "Netlify", layer: "host", header: "x-nf-request-id" },
-	{ name: "AWS CloudFront", layer: "edge", header: "x-amz-cf-id" },
-	{ name: "AWS S3", layer: "host", header: "server", value: /^AmazonS3$/i },
-	{ name: "Google Cloud Storage", layer: "host", header: "x-goog-generation" },
-	{
-		name: "Azure Blob Storage",
-		layer: "host",
-		header: "server",
-		value: /^Windows-Azure-Blob(\/|$)/i,
-	},
-	{ name: "Fastly", layer: "edge", header: "x-served-by", value: /cache-[a-z0-9-]+/i },
-	{ name: "Fastly", layer: "edge", header: "x-fastly-request-id" },
-	// Present on every GitHub property, not just Pages; github.io hostnames identify Pages.
-	{ name: "GitHub", layer: "host", header: "x-github-request-id" },
-	{ name: "Fly.io", layer: "host", header: "fly-request-id" },
-	{ name: "Render", layer: "host", header: "x-render-origin-server" },
-	{ name: "Render", layer: "host", header: "rndr-id" },
-	{
-		name: "Google Cloud",
-		layer: "edge",
+		name: "Google Front End",
+		role: "cdn",
 		header: "server",
 		value: /^(gws|ESF|Google Frontend|sffe)$/i,
 	},
-	{ name: "Firebase", layer: "host", header: "x-served-by", value: /firebase/i },
-	{ name: "Azure", layer: "edge", header: "x-azure-ref" },
-	{ name: "Akamai", layer: "edge", header: "server", value: /AkamaiGHost|AkamaiNetStorage/i },
-	{ name: "Akamai", layer: "edge", header: "x-akamai-transformed" },
-	{ name: "Akamai", layer: "edge", header: "x-akamai-request-id" },
-	{ name: "Heroku", layer: "host", header: "via", value: /heroku-router/i },
-	{ name: "Railway", layer: "host", header: "x-railway-request-id" },
-	{ name: "Shopify", layer: "host", header: "x-shopid" },
-	{ name: "Squarespace", layer: "host", header: "server", value: /squarespace/i },
-	{ name: "Wix", layer: "host", header: "x-wix-request-id" },
-	{ name: "Framer", layer: "host", header: "x-framer-request-id" },
-	{ name: "Discourse", layer: "host", header: "x-discourse-route" },
-	{ name: "Ghost", layer: "host", header: "x-ghost-cache-status" },
-	{ name: "HubSpot", layer: "host", header: "x-hs-hub-id" },
-	{ name: "Substack", layer: "host", header: "x-served-by-substack" },
-	{ name: "GitBook", layer: "host", header: "x-gitbook-site" },
-	{ name: "ReadMe", layer: "host", header: "x-readme-cache" },
-	{ name: "Mintlify", layer: "host", header: "x-mintlify-cache" },
+	{ name: "Bunny CDN", role: "cdn", header: "server", value: /^BunnyCDN/i },
+	{ name: "Hostinger CDN", role: "cdn", header: "x-hcdn-request-id" },
+	{ name: "Hostinger CDN", role: "cdn", header: "server", value: /^hcdn$/i },
+
+	{ name: "Cloudflare Pages", role: "hosting", hostname: /\.pages\.dev$/ },
+	{ name: "Cloudflare Workers", role: "hosting", hostname: /\.workers\.dev$/ },
+	{ name: "Vercel", role: "hosting", hostname: /\.vercel\.app$/ },
+	{ name: "Vercel", role: "hosting", header: "x-vercel-id" },
+	{ name: "Vercel", role: "hosting", header: "server", value: /^Vercel$/i },
+	{ name: "Netlify", role: "hosting", hostname: /\.netlify\.app$/ },
+	{ name: "Netlify", role: "hosting", header: "x-nf-request-id" },
+	{ name: "Netlify", role: "hosting", header: "server", value: /^Netlify/i },
+	{ name: "GitHub Pages", role: "hosting", hostname: /\.github\.io$/ },
+	// github.com itself sends "server: github.com"; only Pages capitalises it.
+	{ name: "GitHub Pages", role: "hosting", header: "server", value: /^GitHub\.com$/ },
+	{
+		name: "AWS S3",
+		role: "hosting",
+		hostname: /(^|\.)s3([.-][a-z0-9-]+)?\.amazonaws\.com(\.cn)?$/,
+	},
+	{ name: "AWS S3", role: "hosting", header: "server", value: /^AmazonS3$/i },
+	{ name: "AWS S3", role: "hosting", header: "x-amz-version-id" },
+	{ name: "Google Cloud Storage", role: "hosting", hostname: /(^|\.)storage\.googleapis\.com$/ },
+	{ name: "Google Cloud Storage", role: "hosting", header: "x-goog-generation" },
+	{ name: "Google Cloud Run", role: "hosting", hostname: /\.run\.app$/ },
+	{ name: "Google Cloud", role: "hosting", header: "x-cloud-trace-context" },
+	{ name: "Firebase", role: "hosting", hostname: /\.(web\.app|firebaseapp\.com)$/ },
+	{
+		name: "Azure Blob Storage",
+		role: "hosting",
+		hostname: /\.(web|blob)\.core\.windows\.net$|\.web\.storage\.azure\.net$/,
+	},
+	{
+		name: "Azure Blob Storage",
+		role: "hosting",
+		header: "server",
+		value: /^Windows-Azure-Blob(\/|$)/i,
+	},
+	{ name: "Azure Static Web Apps", role: "hosting", hostname: /\.azurestaticapps\.net$/ },
+	{ name: "Azure App Service", role: "hosting", hostname: /\.azurewebsites\.net$/ },
+	{ name: "Fly.io", role: "hosting", hostname: /\.fly\.dev$/ },
+	{ name: "Fly.io", role: "hosting", header: "fly-request-id" },
+	{ name: "Render", role: "hosting", hostname: /\.onrender\.com$/ },
+	{ name: "Render", role: "hosting", header: "x-render-origin-server" },
+	{ name: "Render", role: "hosting", header: "rndr-id" },
+	{ name: "Heroku", role: "hosting", hostname: /\.herokuapp\.com$/ },
+	{ name: "Heroku", role: "hosting", header: "via", value: /heroku-router/i },
+	{ name: "Railway", role: "hosting", hostname: /\.railway\.app$/ },
+	{ name: "Railway", role: "hosting", header: "x-railway-request-id" },
+	{ name: "DigitalOcean App Platform", role: "hosting", hostname: /\.ondigitalocean\.app$/ },
+	{ name: "DigitalOcean App Platform", role: "hosting", header: "x-do-app-origin" },
+	{ name: "Shopify", role: "hosting", hostname: /\.myshopify\.com$/ },
+	{ name: "Shopify", role: "hosting", header: "x-shopid" },
+	{ name: "Webflow", role: "hosting", hostname: /\.webflow\.io$/ },
+	{ name: "Framer", role: "hosting", hostname: /\.framer\.(app|website)$/ },
+	{ name: "Framer", role: "hosting", header: "x-framer-request-id" },
+	{ name: "Squarespace", role: "hosting", header: "server", value: /^Squarespace$/i },
+	{ name: "Wix", role: "hosting", header: "x-wix-request-id" },
+	{ name: "Discourse", role: "hosting", header: "x-discourse-route" },
+	{ name: "Ghost", role: "hosting", header: "x-ghost-cache-status" },
+	{ name: "HubSpot", role: "hosting", header: "x-hs-hub-id" },
+	{ name: "Substack", role: "hosting", header: "x-served-by-substack" },
+	{ name: "GitBook", role: "hosting", hostname: /\.gitbook\.io$/ },
+	{ name: "GitBook", role: "hosting", header: "x-gitbook-site" },
+	{ name: "ReadMe", role: "hosting", hostname: /\.readme\.io$/ },
+	{ name: "ReadMe", role: "hosting", header: "x-readme-cache" },
+	{ name: "Mintlify", role: "hosting", hostname: /\.mintlify\.(app|dev)$/ },
+	{ name: "Mintlify", role: "hosting", header: "x-mintlify-cache" },
 ];
 
-export const PROVIDER_NAMES = [
-	...new Set([...RULES.map((rule) => rule.name), "Azure Front Door", "Azure App Service"]),
+/** Shown as-is: they describe the server and caching but don't identify a provider. */
+const DESCRIPTIVE_HEADERS = [
+	"server",
+	"via",
+	"x-powered-by",
+	"cache-control",
+	"age",
+	"cf-cache-status",
+	"x-vercel-cache",
+	"cache-status",
+	"x-cache",
 ];
+const MAX_VALUE_LENGTH = 120;
 
-type Match = {
-	name: string;
-	layer: "edge" | "host";
-	source: "hostname" | "header";
-	evidence: string;
-};
+export const PROVIDER_NAMES = [...new Set(RULES.map((rule) => rule.name))];
 
-/** Classifies edge and host from the final response and its hostname. */
-export function detectInfrastructure(
-	headers: Headers,
-	url: string,
-	dnsProviders: DnsProviders = { edge: [], host: [] },
-): Infrastructure {
+/** Lists the providers the final response or its hostname identifies, citing each signal. */
+export function detectInfrastructure(headers: Headers, url: string): Infrastructure {
 	const hostname = new URL(url).hostname.toLowerCase().replace(/\.$/, "");
-	const matches: Match[] = [];
+	const providers = new Map<string, Provider>();
+	const citedHeaders = new Set<string>();
+
 	for (const rule of RULES) {
+		let evidence: string | undefined;
 		if ("hostname" in rule) {
-			if (rule.hostname.test(hostname)) {
-				matches.push({ ...rule, source: "hostname", evidence: `${rule.label} hostname` });
+			if (rule.hostname.test(hostname)) evidence = `hostname ${hostname}`;
+		} else {
+			const value = headers.get(rule.header);
+			if (value !== null && (!rule.value || rule.value.test(value))) {
+				evidence = `${rule.header}: ${value.slice(0, MAX_VALUE_LENGTH)}`;
+				citedHeaders.add(rule.header);
 			}
-			continue;
 		}
-		const value = headers.get(rule.header);
-		if (value !== null && (!rule.value || rule.value.test(value))) {
-			matches.push({ ...rule, source: "header", evidence: `${rule.header} header` });
-		}
+		if (!evidence) continue;
+		const provider = providers.get(rule.name) ?? { name: rule.name, role: rule.role, evidence: [] };
+		provider.evidence.push(evidence);
+		providers.set(rule.name, provider);
 	}
 
-	const edge = mergeProviders(matches.filter((match) => match.layer === "edge"));
-	let hostMatches = matches.filter((match) => match.layer === "host");
-	// A platform hostname (x.vercel.app) outranks headers, which proxies can pass through.
-	if (hostMatches.some((match) => match.source === "hostname")) {
-		hostMatches = hostMatches.filter((match) => match.source === "hostname");
-	}
-	const host = mergeProviders(hostMatches);
-	if (host.length > 1) for (const provider of host) provider.confidence = "likely";
-
-	const edgeProviders = edge.length > 0 ? edge : dnsProviders.edge;
-	const hostProviders = host.length > 0 ? host : dnsProviders.host;
+	const headerNames = [...new Set([...DESCRIPTIVE_HEADERS, ...citedHeaders])];
 	return {
-		edge: layer(edgeProviders, "unknown"),
-		host: layer(hostProviders, edgeProviders.length > 0 ? "hidden" : "unknown"),
+		providers: [...providers.values()].sort((left, right) =>
+			left.role === right.role ? 0 : left.role === "cdn" ? -1 : 1,
+		),
+		headers: headerNames.flatMap((name) => {
+			const value = headers.get(name);
+			return value === null ? [] : [{ name, value: value.slice(0, MAX_VALUE_LENGTH) }];
+		}),
 	};
-}
-
-function mergeProviders(matches: Match[]): Provider[] {
-	const byName = new Map<string, Provider>();
-	for (const match of matches) {
-		const provider = byName.get(match.name) ?? {
-			name: match.name,
-			confidence: "confirmed",
-			evidence: [],
-		};
-		provider.evidence.push(match.evidence);
-		byName.set(match.name, provider);
-	}
-	return [...byName.values()];
-}
-
-function layer(providers: Provider[], fallback: "hidden" | "unknown"): Layer {
-	return providers.length > 0 ? { status: "identified", providers } : { status: fallback };
-}
-
-export type DnsProviders = { edge: Provider[]; host: Provider[] };
-
-const DNS_TTL_MS = 24 * 60 * 60_000;
-const DNS_TIMEOUT_MS = 1_500;
-
-/**
- * Azure Front Door and App Service leave custom-domain validation TXT records
- * behind. They are the only signal for those origins, so they are "likely".
- */
-export function lookupDnsProviders(
-	url: string,
-	fetch: typeof globalThis.fetch,
-): Promise<DnsProviders> {
-	const hostname = new URL(url).hostname.toLowerCase();
-	return cached(dnsCache, hostname, DNS_TTL_MS, async () => {
-		const [frontDoor, appService] = await Promise.all([
-			hasTxtRecord(`_dnsauth.${hostname}`, fetch),
-			hasTxtRecord(`asuid.${hostname}`, fetch),
-		]);
-		const likely = (name: string, evidence: string): Provider => ({
-			name,
-			confidence: "likely",
-			evidence: [evidence],
-		});
-		return {
-			edge: frontDoor ? [likely("Azure Front Door", "_dnsauth TXT record")] : [],
-			host: appService ? [likely("Azure App Service", "asuid TXT record")] : [],
-		};
-	});
-}
-
-const dnsCache = new Map<string, { expiresAt: number; value: Promise<DnsProviders> }>();
-
-async function hasTxtRecord(name: string, fetch: typeof globalThis.fetch): Promise<boolean> {
-	const query = `https://cloudflare-dns.com/dns-query?type=TXT&name=${encodeURIComponent(name)}`;
-	try {
-		const response = await fetch(query, {
-			headers: { Accept: "application/dns-json" },
-			signal: AbortSignal.timeout(DNS_TIMEOUT_MS),
-		});
-		if (!response.ok) return false;
-		const body: unknown = JSON.parse(await readTextWithLimit(response, 64_000));
-		return isDnsAnswerList(body) && body.Answer.some((answer) => answer.type === 16);
-	} catch {
-		return false;
-	}
-}
-
-function isDnsAnswerList(value: unknown): value is { Answer: { type: unknown }[] } {
-	return (
-		typeof value === "object" &&
-		value !== null &&
-		"Answer" in value &&
-		Array.isArray(value.Answer) &&
-		value.Answer.every(
-			(answer: unknown) => typeof answer === "object" && answer !== null && "type" in answer,
-		)
-	);
 }

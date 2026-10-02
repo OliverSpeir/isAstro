@@ -1,7 +1,7 @@
 ---
 export const prerender = false;
 import Layout from "@layouts/DefaultPage.astro";
-import { checkWebsiteInput, type Check, type Layer, type Verdict } from "@lib/check";
+import { checkWebsiteInput, type Check, type Provider, type Verdict } from "@lib/check";
 import { providerIconIds } from "@lib/provider-icons";
 
 const hasUrlParam = Astro.url.searchParams.has("site") || Astro.url.searchParams.has("url");
@@ -63,23 +63,23 @@ function verdictDetail(verdict: Verdict): string {
 	return `${UNREACHABLE_REASONS[verdict.reason]}${status}`;
 }
 
-function layerSummary(layer: Layer): string {
-	if (layer.status === "identified")
-		return layer.providers.map((provider) => provider.name).join(", ");
-	return layer.status === "hidden" ? "hidden behind CDN" : "unknown";
+function providerNames(providers: readonly Provider[]): string {
+	return providers.map((provider) => provider.name).join(", ") || "not identified in response";
 }
 
 const verdict = check?.verdict;
 const isAstro = verdict?.status === "astro";
 const isStarlight = verdict?.status === "astro" && verdict.starlight;
 const isUnsure = verdict?.status === "blocked" || verdict?.status === "unreachable";
-const layers = check
+const infrastructure = check?.infrastructure;
+const infrastructureRows = infrastructure
 	? ([
-			["Edge", check.infrastructure.edge],
-			["Host", check.infrastructure.host],
+			["CDN", infrastructure.providers.filter((provider) => provider.role === "cdn")],
+			["Hosting", infrastructure.providers.filter((provider) => provider.role === "hosting")],
 		] as const)
 	: [];
-const showInfrastructure = layers.some(([, layer]) => layer.status !== "unknown");
+const showInfrastructure =
+	infrastructure && (infrastructure.providers.length > 0 || infrastructure.headers.length > 0);
 
 let title = "isAstro";
 let description = "Check if a website is built with Astro";
@@ -88,7 +88,7 @@ if (check && verdict) {
 	title = `is ${displayUrl} Astro? ${isAstro ? "Probably" : isUnsure ? "Not Sure" : "Probably not"}`;
 	description = [
 		verdictDetail(verdict),
-		...layers.map(([label, layer]) => `${label}: ${layerSummary(layer)}`),
+		...infrastructureRows.map(([label, providers]) => `${label}: ${providerNames(providers)}`),
 		check.showcase?.astro &&
 			`Astro Showcase: ${check.showcase.astro.listed ? "listed" : "not listed"}`,
 		check.showcase?.starlight &&
@@ -284,12 +284,14 @@ const showcaseLinks = {
 										Infrastructure
 									</h3>
 									<dl class="result-details infrastructure-details">
-										{layers.map(([label, layer]) =>
-											layer.status === "identified" ? (
-												layer.providers.map((provider) => (
-													<div>
-														<dt>{label}:</dt>
-														<dd class="provider-detail">
+										{infrastructureRows.map(([label, providers]) => (
+											<div>
+												<dt>{label}:</dt>
+												{providers.length === 0 ? (
+													<dd class="not-identified">Not identified in response</dd>
+												) : (
+													providers.map((provider) => (
+														<dd class="provider-detail" title={provider.evidence.join("\n")}>
 															<span class="provider-mark" aria-hidden="true">
 																<svg viewBox="0 0 24 24">
 																	<use
@@ -297,22 +299,26 @@ const showcaseLinks = {
 																	/>
 																</svg>
 															</span>
-															<span class="provider-copy">
-																<strong>{`${provider.name}:`}</strong>
-																{` ${provider.evidence.join(", ")}`}
-																{provider.confidence === "likely" ? " · likely" : ""}
-															</span>
+															<strong>{provider.name}</strong>
 														</dd>
-													</div>
-												))
-											) : (
-												<div>
-													<dt>{label}:</dt>
-													<dd>{layer.status === "hidden" ? "Hidden behind CDN" : "Unknown"}</dd>
-												</div>
-											),
-										)}
+													))
+												)}
+											</div>
+										))}
 									</dl>
+									{infrastructure.headers.length > 0 && (
+										<details class="response-headers">
+											<summary>Response headers</summary>
+											<dl>
+												{infrastructure.headers.map((header) => (
+													<div>
+														<dt>{header.name}</dt>
+														<dd>{header.value}</dd>
+													</div>
+												))}
+											</dl>
+										</details>
+									)}
 								</div>
 							)}
 						</div>
@@ -743,8 +749,44 @@ const showcaseLinks = {
 		color: var(--status-label);
 	}
 
-	.provider-copy {
-		min-width: 0;
+	.not-identified {
+		color: var(--status-label);
+	}
+
+	.response-headers {
+		margin-top: 12px;
+		font-size: 0.8125rem;
+	}
+
+	.response-headers summary {
+		color: var(--status-label);
+		cursor: pointer;
+	}
+
+	.response-headers dl {
+		display: grid;
+		gap: 4px;
+		margin: 8px 0 0;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		overflow-wrap: anywhere;
+	}
+
+	.response-headers div {
+		display: flex;
+		gap: 6px;
+	}
+
+	.response-headers dt {
+		color: var(--status-label);
+	}
+
+	.response-headers dt::after {
+		content: ":";
+	}
+
+	.response-headers dd {
+		margin: 0;
+		color: var(--status-value);
 	}
 
 	.provider-detail strong {

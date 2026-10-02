@@ -23,21 +23,17 @@ export type UnreachableReason =
 	| "too-many-redirects"
 	| "disallowed-redirect";
 
-export type Provider = {
-	name: string;
-	/** Hostnames and response headers are "confirmed"; DNS or conflicting headers are "likely". */
-	confidence: "confirmed" | "likely";
-	evidence: string[];
-};
+/** A provider named by a signal only it emits; evidence quotes each signal seen. */
+export type Provider = { name: string; role: "cdn" | "hosting"; evidence: string[] };
 
 /**
- * One infrastructure layer. "hidden" means a CDN answered, so the origin behind
- * it is deliberately not observable, which is expected rather than a failure.
+ * What the final response says about how it was served. A CDN usually hides
+ * the origin, so `providers` may name only the CDN; `headers` are the raw facts.
  */
-export type Layer =
-	{ status: "identified"; providers: Provider[] } | { status: "hidden" } | { status: "unknown" };
-
-export type Infrastructure = { edge: Layer; host: Layer };
+export type Infrastructure = {
+	providers: Provider[];
+	headers: { name: string; value: string }[];
+};
 
 export type Check = {
 	url: string;
@@ -45,15 +41,4 @@ export type Check = {
 	verdict: Verdict;
 	infrastructure: Infrastructure;
 	showcase?: { astro?: ShowcaseStatus; starlight?: ShowcaseStatus };
-};
-
-/** Test/runtime seams. Every field defaults to the real implementation. */
-export type CheckOptions = {
-	fetch?: typeof globalThis.fetch;
-	dnsFetch?: typeof globalThis.fetch;
-	showcaseFetch?: typeof globalThis.fetch;
-	starlightShowcaseFetch?: typeof globalThis.fetch;
-	timeoutMs?: number;
-	maxBytes?: number;
-	maxRedirects?: number;
 };

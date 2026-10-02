@@ -1,6 +1,6 @@
 import { findListing, getShowcaseSites, getStarlightShowcaseSites } from "@lib/showcase";
 import { detect } from "./detect";
-import { detectInfrastructure, lookupDnsProviders, type DnsProviders } from "./infrastructure";
+import { detectInfrastructure } from "./infrastructure";
 import { cached, type TtlCache } from "./ttl-cache";
 import type { Check } from "./types";
 import { normalizeWebsiteInput } from "./url";
@@ -44,29 +44,25 @@ function isCacheable({ verdict }: Check): boolean {
 }
 
 async function runCheck(url: string, fetch: typeof globalThis.fetch): Promise<Check> {
-	// Start slow side lookups alongside the page fetch. All are cached, so a
-	// wasted prefetch costs one request per day (showcases) or per host (DNS).
+	// Fetch the showcase lists alongside the page. They're cached for a day,
+	// so a wasted prefetch costs one request per isolate per day.
 	const astroSites = getShowcaseSites(fetch);
 	const starlightSites = getStarlightShowcaseSites(fetch);
-	const initialDns = lookupDnsProviders(url, fetch);
-	for (const prefetch of [astroSites, starlightSites, initialDns]) prefetch.catch(() => undefined);
+	for (const prefetch of [astroSites, starlightSites]) prefetch.catch(() => undefined);
 
 	const { finalUrl, verdict, headers } = await detect(url, fetch);
-	const sameHost = new URL(finalUrl).hostname === new URL(url).hostname;
-	const [dns, astroListing, starlightListing] = await Promise.all([
-		settled(sameHost ? initialDns : lookupDnsProviders(finalUrl, fetch)),
+	const [astroListing, starlightListing] = await Promise.all([
 		verdict.status === "astro" ? settled(astroSites) : undefined,
 		verdict.status === "astro" && verdict.starlight ? settled(starlightSites) : undefined,
 	]);
 
-	const noDns: DnsProviders = { edge: [], host: [] };
 	return {
 		url,
 		finalUrl,
 		verdict,
 		infrastructure: headers
-			? detectInfrastructure(headers, finalUrl, dns ?? noDns)
-			: { edge: { status: "unknown" }, host: { status: "unknown" } },
+			? detectInfrastructure(headers, finalUrl)
+			: { providers: [], headers: [] },
 		...(verdict.status === "astro" && {
 			showcase: {
 				...(astroListing && { astro: findListing(finalUrl, astroListing) }),
@@ -76,7 +72,7 @@ async function runCheck(url: string, fetch: typeof globalThis.fetch): Promise<Ch
 	};
 }
 
-/** Side lookups are best-effort: a failure means "unknown", never a failed check. */
+/** Showcase lookups are best-effort: a failure omits them, never fails the check. */
 async function settled<T>(promise: Promise<T>): Promise<T | undefined> {
 	try {
 		return await promise;

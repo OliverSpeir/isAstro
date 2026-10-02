@@ -5,7 +5,7 @@ import { providerIconIds } from "@lib/provider-icons";
 
 type Page = { chunks?: string[]; status?: number; headers?: Record<string, string> };
 
-/** A fake internet: `pages` by URL, plus fixed showcase and DNS services. */
+/** A fake internet: `pages` by URL, plus fixed showcase services. */
 function fakeInternet(
 	pages: Record<string, Page>,
 	requested: string[] = [],
@@ -23,8 +23,6 @@ function fakeInternet(
 				new Response('<Card title="Docs" href="https://docs.example/" thumbnail="x.png" />'),
 			);
 		}
-		if (url.startsWith("https://cloudflare-dns.com/"))
-			return Promise.resolve(Response.json({ Status: 3 }));
 		const page = pages[url];
 		if (!page) return Promise.reject(new TypeError(`fetch failed: ${url}`));
 		const chunks = [...(page.chunks ?? [])];
@@ -50,7 +48,7 @@ async function check(
 	return result.check;
 }
 
-void test("reads versions from split, reordered generator tags and reports showcases and host", async () => {
+void test("reads versions from split, reordered generator tags and reports showcases and platform", async () => {
 	const result = await check("listed.example", {
 		"https://listed.example/": {
 			headers: { server: "Vercel", "x-vercel-id": "iad1::abc" },
@@ -75,19 +73,12 @@ void test("reads versions from split, reordered generator tags and reports showc
 		astro: { listed: true, title: "Listed", url: "https://listed.example/" },
 		starlight: { listed: false },
 	});
-	assert.deepEqual(result.infrastructure, {
-		edge: {
-			status: "identified",
-			providers: [{ name: "Vercel", confidence: "confirmed", evidence: ["server header"] }],
-		},
-		host: {
-			status: "identified",
-			providers: [{ name: "Vercel", confidence: "confirmed", evidence: ["x-vercel-id header"] }],
-		},
-	});
+	assert.deepEqual(result.infrastructure.providers, [
+		{ name: "Vercel", role: "hosting", evidence: ["x-vercel-id: iad1::abc", "server: Vercel"] },
+	]);
 });
 
-void test("finds body markers in minified pages without </head>, and hides the host behind a CDN", async () => {
+void test("finds body markers in minified pages without </head>", async () => {
 	const result = await check("https://minified.example", {
 		"https://minified.example/": {
 			headers: { "cf-ray": "abc-DEN" },
@@ -99,7 +90,6 @@ void test("finds body markers in minified pages without </head>, and hides the h
 		starlight: false,
 		evidence: ["class astro-j7pv25f6"],
 	});
-	assert.deepEqual(result.infrastructure.host, { status: "hidden" });
 
 	// Islands inline their props, so a single tag can span many network chunks.
 	const props = `props="${"x".repeat(40_000)}"`;
@@ -195,12 +185,9 @@ void test("reports bot walls as blocked while keeping the infrastructure they re
 		},
 	});
 	assert.deepEqual(cloudflare.verdict, { status: "blocked", by: "cloudflare" });
-	assert.deepEqual(cloudflare.infrastructure.edge, {
-		status: "identified",
-		providers: [
-			{ name: "Cloudflare", confidence: "confirmed", evidence: ["cf-ray header", "server header"] },
-		],
-	});
+	assert.deepEqual(cloudflare.infrastructure.providers, [
+		{ name: "Cloudflare", role: "cdn", evidence: ["cf-ray: abc-EWR", "server: cloudflare"] },
+	]);
 
 	const siteground = await check("https://sg.example", {
 		"https://sg.example/": {
@@ -237,6 +224,41 @@ void test("rejects bad input without fetching, and coalesces concurrent checks",
 	assert.equal(requested.filter((url) => url === "https://popular.example/").length, 1);
 });
 
-void test("every infrastructure provider has an icon", () => {
+void test("reports infrastructure as cited facts from provider-specific signals only", async () => {
+	const githubPages = await check("https://custom-domain.example", {
+		"https://custom-domain.example/": {
+			headers: {
+				server: "GitHub.com",
+				"x-served-by": "cache-lhr-egll1980078-LHR",
+				"x-github-request-id": "BA64:B7B33",
+				"cache-control": "max-age=600",
+				"x-powered-by": "Express",
+				"set-cookie": "session=secret",
+			},
+			chunks: ['<meta name="generator" content="Astro">'],
+		},
+	});
+	assert.deepEqual(githubPages.infrastructure, {
+		providers: [
+			{ name: "Fastly", role: "cdn", evidence: ["x-served-by: cache-lhr-egll1980078-LHR"] },
+			{ name: "GitHub Pages", role: "hosting", evidence: ["server: GitHub.com"] },
+		],
+		headers: [
+			{ name: "server", value: "GitHub.com" },
+			{ name: "x-powered-by", value: "Express" },
+			{ name: "cache-control", value: "max-age=600" },
+			{ name: "x-served-by", value: "cache-lhr-egll1980078-LHR" },
+		],
+	});
+
+	// GitHub's own sites send x-github-request-id too, so that alone isn't GitHub Pages.
+	const githubDocs = await check("https://docs.github.example", {
+		"https://docs.github.example/": {
+			headers: { server: "github.com", "x-github-request-id": "DBF4:31EAC5" },
+			chunks: ['<meta name="generator" content="Astro">'],
+		},
+	});
+	assert.deepEqual(githubDocs.infrastructure.providers, []);
+
 	for (const name of PROVIDER_NAMES) assert.ok(providerIconIds[name], `Missing icon for ${name}`);
 });
