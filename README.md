@@ -38,7 +38,7 @@ input returns `400`.
 	url: string;
 	finalUrl: string; // after redirects
 	verdict:
-		| { status: "astro"; starlight: boolean; astroVersion?: string; starlightVersion?: string; evidence: string[] }
+		| { status: "astro"; starlight: boolean; astroVersion?: string; starlightVersion?: string; evidence: string[]; starlightEvidence?: string[] }
 		| { status: "not-astro" }
 		| { status: "blocked"; by: "cloudflare" | "vercel" | "sgcaptcha" | "unknown" }
 		| { status: "unreachable"; reason: "timeout" | "network-error" | "http-error" | "not-html" | "empty-body" | "too-large" | "too-many-redirects" | "disallowed-redirect"; httpStatus?: number; cloudflareError?: number };

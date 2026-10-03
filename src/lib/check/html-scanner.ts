@@ -90,18 +90,22 @@ export function createPageScanner(baseUrl: string) {
 
 	function astroResult(): ScanResult | undefined {
 		if (!astroGenerator && !starlightGenerator && markers.size === 0) return undefined;
-		const evidence: string[] = [];
-		if (astroGenerator) evidence.push(generatorEvidence("Astro", astroGenerator.version));
-		if (starlightGenerator)
-			evidence.push(generatorEvidence("Starlight", starlightGenerator.version));
-		// A generator tag is conclusive on its own; markers are only the fallback evidence.
-		if (evidence.length === 0) evidence.push(...markers);
+		// Strongest first: the generator tag is conclusive, markers corroborate it.
+		const evidence = [
+			...(astroGenerator ? [generatorEvidence("Astro", astroGenerator.version)] : []),
+			...markers,
+		];
+		const starlightEvidence = starlightGenerator
+			? [generatorEvidence("Starlight", starlightGenerator.version)]
+			: [];
 		return {
 			status: "astro",
 			starlight: Boolean(starlightGenerator),
 			...(astroGenerator?.version && { astroVersion: astroGenerator.version }),
 			...(starlightGenerator?.version && { starlightVersion: starlightGenerator.version }),
-			evidence,
+			// Starlight is built on Astro, so its tag alone also proves Astro.
+			evidence: evidence.length > 0 ? evidence : starlightEvidence,
+			...(starlightGenerator && { starlightEvidence }),
 		};
 	}
 

@@ -7,7 +7,10 @@ export type Verdict =
 			starlight: boolean;
 			astroVersion?: string;
 			starlightVersion?: string;
+			/** Strongest first, e.g. the generator tag, then the markers seen before deciding. */
 			evidence: string[];
+			/** The Starlight generator tag, when present. */
+			starlightEvidence?: string[];
 	  }
 	| { status: "not-astro" }
 	| { status: "blocked"; by: "cloudflare" | "vercel" | "sgcaptcha" | "unknown" }

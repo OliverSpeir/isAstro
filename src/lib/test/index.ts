@@ -130,7 +130,9 @@ void test("reads versions from split, reordered generator tags and reports showc
 		starlight: true,
 		astroVersion: "v5.1",
 		starlightVersion: "v0.30",
-		evidence: ['generator meta tag "Astro v5.1"', 'generator meta tag "Starlight v0.30"'],
+		// The generator leads; the asset seen before deciding corroborates it.
+		evidence: ['generator meta tag "Astro v5.1"', "_astro/ asset"],
+		starlightEvidence: ['generator meta tag "Starlight v0.30"'],
 	});
 	assert.deepEqual(result.showcase, {
 		astro: { listed: true, title: "Listed", url: "https://listed.example/" },

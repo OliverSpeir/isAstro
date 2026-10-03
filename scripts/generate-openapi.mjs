@@ -110,6 +110,7 @@ const spec = {
 						starlight: { type: "boolean" },
 						astroVersion: { type: "string" },
 						starlightVersion: { type: "string" },
+						starlightEvidence: { type: "array", items: { type: "string" } },
 						evidence: { type: "array", items: { type: "string" } },
 					}),
 					object(["status"], { status: { const: "not-astro" } }),

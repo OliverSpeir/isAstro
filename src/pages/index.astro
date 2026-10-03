@@ -55,7 +55,7 @@ function verdictHeading(verdict: Verdict): string {
 }
 
 function verdictDetail(verdict: Verdict): string {
-	if (verdict.status === "astro") return verdict.evidence.join(", ");
+	if (verdict.status === "astro") return verdict.evidence[0] ?? "";
 	if (verdict.status === "not-astro") return "No Astro evidence found";
 	if (verdict.status === "blocked")
 		return `Blocked by ${BOT_WALL_NAMES[verdict.by]} bot protection`;
@@ -224,6 +224,16 @@ const showcaseLinks = {
 										<dt>{isAstro ? "Evidence:" : "Details:"}</dt>
 										<dd>
 											{verdictDetail(verdict)}
+											{verdict.status === "astro" && verdict.evidence.length > 1 && (
+												<details class="raw-details">
+													<summary>All evidence ({verdict.evidence.length})</summary>
+													<ul>
+														{verdict.evidence.map((item) => (
+															<li>{item}</li>
+														))}
+													</ul>
+												</details>
+											)}
 											{verdict.status === "unreachable" && verdict.cloudflareError && (
 												<p class="detail-note">
 													<a
@@ -270,8 +280,14 @@ const showcaseLinks = {
 										<img class="status-icon framework-icon" src="/starlight.svg" alt="" />
 										Starlight Detected
 									</h3>
-									{check.showcase?.starlight && (
-										<dl class="result-details">
+									<dl class="result-details">
+										{verdict.starlightEvidence && (
+											<div>
+												<dt>Evidence:</dt>
+												<dd>{verdict.starlightEvidence.join(", ")}</dd>
+											</div>
+										)}
+										{check.showcase?.starlight && (
 											<div>
 												<dt>Showcase:</dt>
 												<dd>
@@ -294,8 +310,8 @@ const showcaseLinks = {
 													)}
 												</dd>
 											</div>
-										</dl>
-									)}
+										)}
+									</dl>
 								</div>
 							)}
 
@@ -331,7 +347,7 @@ const showcaseLinks = {
 										))}
 									</dl>
 									{infrastructure.headers.length > 0 && (
-										<details class="response-headers">
+										<details class="response-headers raw-details">
 											<summary>Response headers</summary>
 											<dl>
 												{infrastructure.headers.map((header) => (
@@ -785,14 +801,21 @@ const showcaseLinks = {
 		color: var(--status-label);
 	}
 
-	.response-headers {
+	.raw-details {
 		margin-top: 12px;
 		font-size: 0.8125rem;
 	}
 
-	.response-headers summary {
+	.raw-details summary {
 		color: var(--status-label);
 		cursor: pointer;
+	}
+
+	.raw-details ul {
+		margin: 8px 0 0;
+		padding-left: 1.25rem;
+		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+		overflow-wrap: anywhere;
 	}
 
 	.response-headers dl {

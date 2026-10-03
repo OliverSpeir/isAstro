@@ -134,6 +134,12 @@
               "starlightVersion": {
                 "type": "string"
               },
+              "starlightEvidence": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               "evidence": {
                 "type": "array",
                 "items": {
