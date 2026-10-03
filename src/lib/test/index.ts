@@ -118,7 +118,7 @@ async function check(
 void test("reads versions from split, reordered generator tags and reports showcases and platform", async () => {
 	const result = await check("listed.example", {
 		"https://listed.example/": {
-			headers: { server: "Vercel", "x-vercel-id": "iad1::abc" },
+			headers: { server: "Vercel", "x-vercel-id": "iad1::abc", "x-vercel-cache": "HIT" },
 			chunks: [
 				'<!doctype html><html><head><link rel="stylesheet" href="/_astro/index.css"><meta content="Astro v5.1" na',
 				'me="generator"><meta name="generator" content="Starlight v0.30"></head><body></body></html>',
@@ -137,6 +137,7 @@ void test("reads versions from split, reordered generator tags and reports showc
 		starlight: { listed: false },
 	});
 	assert.deepEqual(result.infrastructure.providers, [
+		{ name: "Vercel", role: "cdn", evidence: ["x-vercel-cache: HIT"] },
 		{ name: "Vercel", role: "hosting", evidence: ["x-vercel-id: iad1::abc", "server: Vercel"] },
 	]);
 });

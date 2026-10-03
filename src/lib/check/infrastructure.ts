@@ -27,6 +27,9 @@ const RULES: readonly Rule[] = [
 	{ name: "Bunny CDN", role: "cdn", header: "server", value: /^BunnyCDN/i },
 	{ name: "Hostinger CDN", role: "cdn", header: "x-hcdn-request-id" },
 	{ name: "Hostinger CDN", role: "cdn", header: "server", value: /^hcdn$/i },
+	// Both platforms name their own edge cache on every response it serves.
+	{ name: "Netlify", role: "cdn", header: "cache-status", value: /"Netlify Edge"/i },
+	{ name: "Vercel", role: "cdn", header: "x-vercel-cache" },
 
 	{ name: "Cloudflare Pages", role: "hosting", hostname: /\.pages\.dev$/ },
 	{ name: "Cloudflare Workers", role: "hosting", hostname: /\.workers\.dev$/ },
@@ -119,7 +122,7 @@ export function detectInfrastructure(
 	const providers = new Map<string, Provider>();
 	const citedHeaders = new Set<string>();
 	if (cloudflareAddress) {
-		providers.set("Cloudflare", {
+		providers.set("cdn:Cloudflare", {
 			name: "Cloudflare",
 			role: "cdn",
 			evidence: [`address ${cloudflareAddress} on Cloudflare's network`],
@@ -138,9 +141,11 @@ export function detectInfrastructure(
 			}
 		}
 		if (!evidence) continue;
-		const provider = providers.get(rule.name) ?? { name: rule.name, role: rule.role, evidence: [] };
+		// Keyed by role too: Netlify and Vercel can be both the CDN and the host.
+		const key = `${rule.role}:${rule.name}`;
+		const provider = providers.get(key) ?? { name: rule.name, role: rule.role, evidence: [] };
 		provider.evidence.push(evidence);
-		providers.set(rule.name, provider);
+		providers.set(key, provider);
 	}
 
 	const headerNames = [...new Set([...DESCRIPTIVE_HEADERS, ...citedHeaders])];
